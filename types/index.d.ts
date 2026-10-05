@@ -158,6 +158,10 @@ export interface Branding {
   retryText?: string;
   /** Text of the "Open Telegram" button shown to touch devices. */
   mobileLinkText?: string;
+  /** Heading on the page a phone sees when it opens a QR whose code expired or was used. */
+  scanEndedHeading?: string;
+  /** Text under `scanEndedHeading`. */
+  scanEndedText?: string;
   /** Subtitle shown to touch devices instead of `subtitle`. */
   mobileSubtitle?: string;
   /** Divider between the button and the QR on touch devices. */
@@ -231,6 +235,12 @@ export interface TelegramQrAuthConfig {
   pollIntervalMs?: number;
   branding?: Branding;
   qr?: QrOptions;
+  /**
+   * Opt-in. An https origin you serve this app at, e.g. "https://app.example.com". The QR then
+   * encodes https://<qrOrigin><basePath>/q/<token>, which redirects to the t.me deep link.
+   * Unset (the default), the QR encodes the t.me deep link itself.
+   */
+  qrOrigin?: string;
   renderLoginPage?: (params: RenderLoginPageParams) => string;
   claims?: (user: AuthUser) => Record<string, unknown>;
   captureClient?: boolean;
@@ -240,10 +250,12 @@ export interface TelegramQrAuthConfig {
 
 export interface RenderLoginPageParams {
   token: string;
-  /** https://t.me/<bot>?start=<payload> — what the QR encodes. */
+  /** https://t.me/<bot>?start=<payload>. */
   deepLink: string;
   /** tg://resolve?domain=<bot>&start=<payload> — what the button and a click on the QR open. */
   appLink?: string;
+  /** What `qrSvg` encodes: `deepLink`, or https://<qrOrigin>/auth/q/<token> when `qrOrigin` is set. */
+  qrLink?: string;
   qrSvg: string;
   error?: string;
   pollPath: string;
@@ -263,8 +275,12 @@ export interface SessionClaims extends Record<string, unknown> {
 
 export interface BeginLoginResult {
   token: string;
+  /** https://t.me/<bot>?start=<payload> */
   deepLink: string;
+  /** tg://resolve?domain=<bot>&start=<payload> */
   appLink: string;
+  /** What `svg` encodes: `deepLink`, or https://<qrOrigin>/auth/q/<token> when `qrOrigin` is set. */
+  qrLink: string;
   payload: string;
   svg: string;
   expiresIn: number;
@@ -284,7 +300,7 @@ export type GuardResult =
 export interface TelegramQrAuth {
   namespace: string;
   basePath: string;
-  paths: { poll: string; login: string; logout: string; qr: string };
+  paths: { poll: string; login: string; logout: string; qr: string; scan: string };
   cookieName: string;
   tokenTtlSeconds: number;
 
@@ -295,6 +311,8 @@ export interface TelegramQrAuth {
     ({ matched: false } | ({ matched: true; replyText: string } & ConfirmResult))
   >;
   poll(request: Request): Promise<Response>;
+  /** GET `${paths.scan}/<token>`: 302 to the t.me deep link while the code is live, else a "code ended" page. */
+  scan(request: Request): Promise<Response>;
   getSession(request: Request): Promise<SessionClaims | null>;
   verifyAssertion(assertion: string | null): Promise<SessionClaims | null>;
   guard(
@@ -311,6 +329,7 @@ export interface TelegramQrAuth {
   handle(request: Request): Promise<Response | null>;
   deepLinkFor(token: string): string;
   appLinkFor(token: string): string;
+  qrLinkFor(token: string): string;
 
   store: LoginStore;
   telegram: TelegramApi | null;

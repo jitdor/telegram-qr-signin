@@ -43,6 +43,8 @@ namespace TelegramQrAuth
     {
         [JsonPropertyName("token")] public string Token { get; set; } = "";
         [JsonPropertyName("deepLink")] public string DeepLink { get; set; } = "";
+        /// <summary>What <see cref="Svg"/> encodes: <see cref="DeepLink"/>, or https://&lt;qrOrigin&gt;/auth/q/&lt;token&gt; when the service sets qrOrigin.</summary>
+        [JsonPropertyName("qrLink")] public string QrLink { get; set; } = "";
         [JsonPropertyName("svg")] public string Svg { get; set; } = "";
         [JsonPropertyName("expiresIn")] public int ExpiresIn { get; set; }
     }

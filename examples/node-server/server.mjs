@@ -30,6 +30,10 @@ const auth = createTelegramQrAuth({
   // Never do this in production.
   session: { secret: process.env.SESSION_SECRET ?? "dev-only-secret", secure: false },
   branding: { heading: "Node demo", subtitle: "Scan with Telegram. Nothing to type." },
+  // The QR encodes https://t.me/<bot>?start=... by default. Once this runs behind HTTPS on a
+  // domain of yours, set qrOrigin and the QR encodes https://<that domain>/auth/q/<token> instead,
+  // which redirects to the same t.me link (see "Deploying" in the README).
+  // qrOrigin: "https://app.example.com",
 });
 
 // ---- The web half -----------------------------------------------------------------------------

@@ -202,6 +202,7 @@ func FromContext(ctx context.Context) (Session, bool) {
 type Challenge struct {
 	Token     string `json:"token"`
 	DeepLink  string `json:"deepLink"`
+	QRLink    string `json:"qrLink"` // what SVG encodes: DeepLink, or https://<qrOrigin>/auth/q/<token>
 	SVG       string `json:"svg"`
 	ExpiresIn int    `json:"expiresIn"`
 	PollPath  string `json:"pollPath"`

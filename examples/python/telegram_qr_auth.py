@@ -146,7 +146,7 @@ class Client:
         self._opener = opener
 
     def begin(self) -> dict[str, Any]:
-        """Ask for a challenge: {token, deepLink, svg, expiresIn, pollPath}."""
+        """Ask for a challenge: {token, deepLink, qrLink, svg, expiresIn, pollPath}."""
         return self._get_json(f"{self.auth_base}/auth/qr")
 
     def wait_for_scan(self, token: str, *, interval: float = 2.0, timeout: float = 600.0) -> tuple[str, Session]:

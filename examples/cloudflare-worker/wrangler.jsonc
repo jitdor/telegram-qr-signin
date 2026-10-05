@@ -9,6 +9,8 @@
   "vars": {
     "TELEGRAM_BOT_USERNAME": "your_bot",
     "CHAT_ID": "-1001234567890"
+    // Optional: the https domain this Worker is served at, to put in the QR instead of t.me.
+    // "QR_ORIGIN": "https://app.example.com"
   },
 
   // The only storage this app has: a 10-minute record per in-flight sign-in. No database, no

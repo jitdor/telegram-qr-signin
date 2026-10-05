@@ -4,10 +4,11 @@
 //
 //   1. A signed-out browser hits the app. `guard()` finds no valid cookie and returns the sign-in
 //      page, which embeds a freshly minted one-time token as a QR encoding
-//      https://t.me/<bot>?start=<namespace>_<token>.
-//   2. The user scans it with the Telegram app they are already signed into. Telegram opens a chat
-//      with the bot and sends "/start <namespace>_<token>". That is the entire user input budget:
-//      one scan. No phone number, no login code, no password, no typing.
+//      https://t.me/<bot>?start=<namespace>_<token> — or, with `qrOrigin` set, an address on that
+//      domain which redirects there (see `scan()` for why you might want that).
+//   2. The user scans it with their phone camera or the Telegram app they are already signed into.
+//      Telegram opens a chat with the bot and sends "/start <namespace>_<token>". That is the
+//      entire user input budget: one scan. No phone number, no login code, no password, no typing.
 //   3. The bot Worker calls `confirm()`, which runs the authorization gate against the scanner's
 //      Telegram identity and, if it passes, flips the token to confirmed in the shared store.
 //   4. The browser has been polling `/auth/poll` the whole time. The first poll after confirmation
@@ -24,7 +25,7 @@ import { qrSvg as renderQrSvg } from "./qr.js";
 import { createSessionCodec, DEFAULT_MAX_AGE_SECONDS } from "./session.js";
 import { TelegramClient, displayName, toAuthUser } from "./telegram.js";
 import { anyUser, normalize as normalizeGate } from "./gates.js";
-import { renderLoginPage as defaultRenderLoginPage } from "./login-page.js";
+import { renderLoginPage as defaultRenderLoginPage, renderScanEndedPage } from "./login-page.js";
 
 /** The status values `/auth/poll` can return. A custom login page must understand all five. */
 export const POLL_STATUSES = ["pending", "confirmed", "expired", "invalid", "denied"];
@@ -59,6 +60,9 @@ const NAMESPACE_RE = /^[A-Za-z0-9-]{1,24}$/; // no "_": it is the payload separa
  * @param {number} [config.pollIntervalMs=2000]
  * @param {object} [config.branding]        See DEFAULT_BRANDING in ./login-page.js.
  * @param {object} [config.qr]              See qrSvg options in ./qr.js.
+ * @param {string} [config.qrOrigin]        Opt-in. An https origin you serve this app at, e.g.
+ *   "https://app.example.com". The QR then encodes https://<qrOrigin><basePath>/q/<token>, which
+ *   redirects to the t.me deep link. Unset, the QR encodes the t.me deep link itself.
  * @param {Function} [config.renderLoginPage]  Replace the built-in page entirely.
  * @param {Function} [config.claims]        `(user) => object` of extra claims to sign into the
  *   cookie. Keep it small: it rides on every request, and it is signed, not encrypted.
@@ -86,6 +90,7 @@ export function createTelegramQrAuth(config) {
     pollIntervalMs = 2000,
     branding,
     qr: qrOptions,
+    qrOrigin: qrOriginOption,
     renderLoginPage = defaultRenderLoginPage,
     claims,
     captureClient = true,
@@ -98,6 +103,10 @@ export function createTelegramQrAuth(config) {
   if (!telegram && !botToken) throw new Error("createTelegramQrAuth: pass `botToken` or `telegram`");
   if (!NAMESPACE_RE.test(namespace)) {
     throw new Error("createTelegramQrAuth: `namespace` must be 1-24 chars of A-Z a-z 0-9 - (no underscore)");
+  }
+  const qrOrigin = qrOriginOption ? httpsOriginOf(qrOriginOption) : null;
+  if (qrOriginOption && !qrOrigin) {
+    throw new Error("createTelegramQrAuth: `qrOrigin` must be an https URL such as https://app.example.com");
   }
 
   const sessionOptions = config.session ?? {};
@@ -115,6 +124,8 @@ export function createTelegramQrAuth(config) {
   const loginPath = joinPath(basePath, "login");
   const logoutPath = joinPath(basePath, "logout");
   const qrPath = joinPath(basePath, "qr");
+  const scanPath = joinPath(basePath, "q");
+  const scanPrefix = `${scanPath}/`;
 
   /** `<namespace>_<token>` — what the QR carries and what `/start` hands back. */
   function payloadFor(token) {
@@ -125,9 +136,14 @@ export function createTelegramQrAuth(config) {
     return `https://t.me/${botUsername}?start=${payloadFor(token)}`;
   }
 
-  /** Opens the Telegram app directly, skipping the t.me web page. Cameras need `deepLinkFor`. */
+  /** Opens the Telegram app directly, skipping the t.me web page. Cameras need an https link. */
   function appLinkFor(token) {
     return `tg://resolve?domain=${botUsername}&start=${payloadFor(token)}`;
+  }
+
+  /** What the QR encodes: https://<qrOrigin>/auth/q/<token> when `qrOrigin` is set, else the t.me deep link. */
+  function qrLinkFor(token) {
+    return qrOrigin ? `${qrOrigin}${scanPrefix}${token}` : deepLinkFor(token);
   }
 
   /**
@@ -156,13 +172,14 @@ export function createTelegramQrAuth(config) {
       expiresAt: now() + tokenTtlSeconds,
       client: captureClient && request ? describeClient(request) : null,
     });
-    const deepLink = deepLinkFor(token);
+    const qrLink = qrLinkFor(token);
     return {
       token,
-      deepLink,
+      deepLink: deepLinkFor(token),
       appLink: appLinkFor(token),
+      qrLink,
       payload: payloadFor(token),
-      svg: renderQrSvg(deepLink, qrOptions),
+      svg: renderQrSvg(qrLink, qrOptions),
       expiresIn: tokenTtlSeconds,
     };
   }
@@ -173,11 +190,12 @@ export function createTelegramQrAuth(config) {
    * the page cannot be used to send people to another site.
    */
   async function loginPage({ error, request, redirectTo: to } = {}) {
-    const { token, deepLink, appLink, svg } = await beginLogin({ request });
+    const { token, deepLink, appLink, qrLink, svg } = await beginLogin({ request });
     return renderLoginPage({
       token,
       deepLink,
       appLink,
+      qrLink,
       qrSvg: svg,
       error,
       pollPath,
@@ -286,6 +304,40 @@ export function createTelegramQrAuth(config) {
     }
 
     return jsonResponse({ status: "invalid" });
+  }
+
+  /**
+   * Where the QR points when `qrOrigin` is set. The default t.me link is already https, which phone
+   * cameras open; routing the scan through your own domain additionally shows the user whose site
+   * they are about to sign into, and lets a dead code say so here instead of opening Telegram for
+   * nothing. A live code is sent on to the t.me deep link, whose page Telegram maintains for every
+   * platform, with or without the app installed.
+   *
+   * Read-only: opening it neither confirms nor spends the token, so link previews and scanners
+   * that prefetch URLs are harmless. Only a /start from the scanner's Telegram account confirms.
+   */
+  async function scan(request) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+    }
+    const url = new URL(request.url);
+    const token = url.pathname.startsWith(scanPrefix) ? url.pathname.slice(scanPrefix.length) : "";
+    const record = TOKEN_RE.test(token) ? await store.get(token, namespace) : null;
+    if (record?.status === "pending" && record.expiresAt > now()) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: deepLinkFor(token), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+      });
+    }
+    return new Response(request.method === "HEAD" ? null : renderScanEndedPage({ branding }), {
+      status: TOKEN_RE.test(token) ? 410 : 404,
+      headers: {
+        "Content-Type": "text/html; charset=UTF-8",
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        [LOGIN_PAGE_HEADER]: "scan",
+      },
+    });
   }
 
   /**
@@ -405,10 +457,11 @@ export function createTelegramQrAuth(config) {
       return logoutResponse();
     }
     if (url.pathname === loginPath) return loginResponse({ request });
+    if (url.pathname.startsWith(scanPrefix)) return scan(request);
     if (url.pathname === qrPath) {
       // For apps that render their own sign-in UI and just want the ingredients.
-      const { token, deepLink, appLink, svg, expiresIn } = await beginLogin({ request });
-      return jsonResponse({ token, deepLink, appLink, svg, expiresIn, pollPath });
+      const { token, deepLink, appLink, qrLink, svg, expiresIn } = await beginLogin({ request });
+      return jsonResponse({ token, deepLink, appLink, qrLink, svg, expiresIn, pollPath });
     }
     return null;
   }
@@ -416,7 +469,7 @@ export function createTelegramQrAuth(config) {
   return {
     namespace,
     basePath,
-    paths: { poll: pollPath, login: loginPath, logout: logoutPath, qr: qrPath },
+    paths: { poll: pollPath, login: loginPath, logout: logoutPath, qr: qrPath, scan: scanPath },
     cookieName: codec.cookieName,
     tokenTtlSeconds,
 
@@ -425,6 +478,7 @@ export function createTelegramQrAuth(config) {
     confirm,
     handleStart,
     poll,
+    scan,
     getSession,
     verifyAssertion,
     guard,
@@ -434,6 +488,7 @@ export function createTelegramQrAuth(config) {
     handle,
     deepLinkFor,
     appLinkFor,
+    qrLinkFor,
 
     // Escape hatches for apps that need to go below the convenience layer.
     store,
@@ -491,6 +546,16 @@ function describeClient(request) {
 function safeOrigin(url) {
   try {
     return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/** The origin of `value` if it is an absolute https URL, else null. */
+function httpsOriginOf(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.origin : null;
   } catch {
     return null;
   }

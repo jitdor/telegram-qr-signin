@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createTelegramQrAuth, sameSitePath, LOGIN_PAGE_HEADER } from "../src/provider.js";
+import { qrSvg } from "../src/qr.js";
 import { D1LoginStore } from "../src/stores/d1.js";
 import { MemoryLoginStore } from "../src/stores/memory.js";
 import { DoLoginStore, defineQrAuthStorage } from "../src/do.js";
@@ -330,6 +331,80 @@ test("beginLogin and /auth/qr hand out a tg:// app link beside the https deep li
   const body = await (await auth.handle(makeRequest("https://app.example/auth/qr"))).json();
   assert.equal(body.appLink, `tg://resolve?domain=example_bot&start=cockpit_${body.token}`);
   assert.equal(body.deepLink, `https://t.me/example_bot?start=cockpit_${body.token}`);
+});
+
+test("by default the QR encodes the https t.me deep link", async () => {
+  const { auth } = setup();
+  const { token, qrLink, deepLink, svg } = await auth.beginLogin({ request: makeRequest("https://app.example/") });
+  assert.equal(deepLink, `https://t.me/example_bot?start=cockpit_${token}`);
+  assert.equal(qrLink, deepLink);
+  assert.equal(svg, qrSvg(deepLink));
+
+  const body = await (await auth.handle(makeRequest("https://app.example/auth/qr"))).json();
+  assert.equal(body.qrLink, body.deepLink);
+});
+
+test("with qrOrigin the QR encodes a scan link on that domain", async () => {
+  const { auth } = setup({ qrOrigin: "https://login.example.com/ignored/path" });
+  assert.equal(auth.paths.scan, "/auth/q");
+  // Whatever host the page was served from: the QR uses the configured domain.
+  const { token, qrLink, svg } = await auth.beginLogin({ request: makeRequest("http://10.0.0.5:3000/") });
+  assert.equal(qrLink, `https://login.example.com/auth/q/${token}`);
+  assert.equal(svg, qrSvg(qrLink));
+  assert.equal(auth.qrLinkFor(token), qrLink);
+
+  const bare = await auth.beginLogin();
+  assert.equal(bare.qrLink, `https://login.example.com/auth/q/${bare.token}`);
+
+  const body = await (await auth.handle(makeRequest("https://app.example/auth/qr"))).json();
+  assert.equal(body.qrLink, `https://login.example.com/auth/q/${body.token}`);
+  assert.equal(body.svg, qrSvg(body.qrLink));
+
+  const based = setup({ qrOrigin: "https://login.example.com", basePath: "/sso" }).auth;
+  assert.match((await based.beginLogin()).qrLink, /^https:\/\/login\.example\.com\/sso\/q\/[0-9a-f]{32}$/);
+});
+
+test("qrOrigin must be an https URL", () => {
+  assert.throws(() => setup({ qrOrigin: "login.example.com" }), /qrOrigin/);
+  assert.throws(() => setup({ qrOrigin: "http://login.example.com" }), /qrOrigin/);
+});
+
+test("the scan link sends a live code on to Telegram and changes nothing", async () => {
+  let clock = Math.floor(Date.now() / 1000);
+  const { auth } = setup({ now: () => clock, qrOrigin: "https://app.example" });
+  const { token, deepLink } = await auth.beginLogin();
+
+  const opened = await auth.handle(makeRequest(`https://app.example/auth/q/${token}`));
+  assert.equal(opened.status, 302);
+  assert.equal(opened.headers.get("Location"), deepLink);
+  assert.match(opened.headers.get("Cache-Control"), /no-store/);
+
+  // Opening it twice (a link preview, a scanner that prefetches) neither confirms nor spends it.
+  assert.equal((await auth.handle(makeRequest(`https://app.example/auth/q/${token}`))).status, 302);
+  assert.deepEqual(await (await pollOnce(auth, token)).json(), { status: "pending" });
+
+  // Once confirmed, the link no longer sends anyone to Telegram.
+  assert.equal((await auth.handleStart({ text: `/start cockpit_${token}`, from: ALICE })).ok, true);
+  const used = await auth.handle(makeRequest(`https://app.example/auth/q/${token}`));
+  assert.equal(used.status, 410);
+  assert.equal(used.headers.get("Location"), null);
+  assert.match(await used.text(), /This sign-in code has ended/);
+
+  // Nor once expired.
+  const late = await auth.beginLogin();
+  clock += auth.tokenTtlSeconds;
+  assert.equal((await auth.handle(makeRequest(`https://app.example/auth/q/${late.token}`))).status, 410);
+});
+
+test("the scan link refuses junk and non-GET methods", async () => {
+  const { auth } = setup();
+  assert.equal((await auth.handle(makeRequest("https://app.example/auth/q/nope"))).status, 404);
+  assert.equal((await auth.handle(makeRequest(`https://app.example/auth/q/${"0".repeat(32)}`))).status, 410);
+  const { token } = await auth.beginLogin();
+  const post = await auth.handle(makeRequest(`https://app.example/auth/q/${token}`, { method: "POST" }));
+  assert.equal(post.status, 405);
+  // The scan page is not the sign-in page, so it is not routed as one.
+  assert.equal(await auth.handle(makeRequest("https://app.example/auth/q")), null);
 });
 
 test("a signed-out deep link comes back to the page that was asked for", async () => {

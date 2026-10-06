@@ -18,7 +18,7 @@ export const SIGNING_ALG = "ES256";
 /**
  * Generates a fresh signing key. Run once, store the private JWK as a secret:
  *
- *   node -e "import('telegram-qr-auth/oidc').then(async m => console.log(JSON.stringify(await m.generateSigningKey())))"
+ *   node -e "import('telegram-qr-signin/oidc').then(async m => console.log(JSON.stringify(await m.generateSigningKey())))"
  *
  * The result contains the private key. Treat it exactly as you would a TLS private key: a secret
  * manager or `wrangler secret put`, never the repo, never a var.

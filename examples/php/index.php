@@ -4,7 +4,7 @@
  *
  * Deployment shape this assumes:
  *
- *   auth.example.com   the Worker running telegram-qr-auth (mints tokens, shows the QR, polls)
+ *   auth.example.com   the Worker running telegram-qr-signin (mints tokens, shows the QR, polls)
  *   app.example.com    this PHP app (verifies only)
  *
  * Both under one registrable domain, and the Worker configured with:

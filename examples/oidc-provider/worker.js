@@ -10,7 +10,7 @@
 //   EITHER a Durable Object (one binding, no provisioning — see wrangler.jsonc), OR:
 //   wrangler d1 create oidc && wrangler d1 execute oidc --remote --file=migrations/oidc-d1.sql
 //   wrangler unsafe ratelimit ...             # bind RATE_LIMITER — the worker refuses to boot without it
-//   node -e "import('telegram-qr-auth/oidc').then(async m => console.log(JSON.stringify(await m.generateSigningKey())))"
+//   node -e "import('telegram-qr-signin/oidc').then(async m => console.log(JSON.stringify(await m.generateSigningKey())))"
 //   wrangler secret put OIDC_SIGNING_KEY        # the JSON from the line above
 //   wrangler secret put TELEGRAM_BOT_TOKEN
 //   wrangler secret put TELEGRAM_WEBHOOK_SECRET
@@ -23,10 +23,10 @@
 // example uses D1 rather than KV for the OIDC store.
 
 import { DurableObject } from "cloudflare:workers";
-import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-auth";
-import { DoLoginStore, DoOidcStore, defineQrAuthStorage } from "telegram-qr-auth/do";
-import { createWebhookHandler } from "telegram-qr-auth/bot";
-import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-auth/oidc";
+import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-signin";
+import { DoLoginStore, DoOidcStore, defineQrAuthStorage } from "telegram-qr-signin/do";
+import { createWebhookHandler } from "telegram-qr-signin/bot";
+import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-signin/oidc";
 
 // One SQLite-backed Durable Object can hold both the QR sign-in records and the provider state.
 export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}

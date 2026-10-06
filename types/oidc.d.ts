@@ -1,4 +1,4 @@
-// Types for telegram-qr-auth/oidc.
+// Types for telegram-qr-signin/oidc.
 
 import type { Gate, AuthUser, TelegramQrAuth } from "./index";
 export { DoOidcStore } from "./do";

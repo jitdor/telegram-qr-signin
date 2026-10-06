@@ -1,6 +1,6 @@
 # Running a public identity provider
 
-`telegram-qr-auth/oidc` turns the QR sign-in into a standards-compliant OpenID Connect provider —
+`telegram-qr-signin/oidc` turns the QR sign-in into a standards-compliant OpenID Connect provider —
 the shape Microsoft runs for consumer accounts, with Telegram as the authentication method instead
 of a password. Relying parties integrate with a stock OIDC library and never learn that Telegram is
 involved.
@@ -32,7 +32,7 @@ using even internally, because it removes "every verifier can also forge" from y
 **1. Generate a signing key** (once — then treat it exactly like a TLS private key):
 
 ```bash
-node -e "import('telegram-qr-auth/oidc').then(async m => console.log(JSON.stringify(await m.generateSigningKey())))"
+node -e "import('telegram-qr-signin/oidc').then(async m => console.log(JSON.stringify(await m.generateSigningKey())))"
 ```
 
 ```bash
@@ -42,8 +42,8 @@ wrangler secret put OIDC_SIGNING_KEY
 **2. Wire it up:**
 
 ```js
-import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-auth";
-import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-auth/oidc";
+import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-signin";
+import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-signin/oidc";
 
 const auth = createTelegramQrAuth({
   botToken: env.TELEGRAM_BOT_TOKEN,
@@ -187,7 +187,7 @@ The code enforces the protocol. These are yours:
   `rotateRefreshToken` are read-then-write, and its family index is a read-modify-write: two
   simultaneous redemptions of one stolen code — or two simultaneous refreshes with one stolen
   token — could both succeed, defeating reuse detection. Use `D1OidcStore` (schema in
-  `migrations/oidc-d1.sql`) or `DoOidcStore` (from `telegram-qr-auth/do`: a SQLite-backed Durable Object, no
+  `migrations/oidc-d1.sql`) or `DoOidcStore` (from `telegram-qr-signin/do`: a SQLite-backed Durable Object, no
   database to provision) for anything third parties touch.
   `examples/oidc-provider` uses D1 and refuses to boot without a rate limiter.
 - **Audit logging.** Wire `onEvent` to real storage. Every issuance, denial and reuse detection

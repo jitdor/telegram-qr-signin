@@ -9,8 +9,8 @@
 // see "Writing a store" in the README).
 
 import { createServer } from "node:http";
-import { createTelegramQrAuth, MemoryLoginStore, allowlist, anyUser, TelegramClient, escapeHtml } from "telegram-qr-auth";
-import { createStartHandler } from "telegram-qr-auth/bot";
+import { createTelegramQrAuth, MemoryLoginStore, allowlist, anyUser, TelegramClient, escapeHtml } from "telegram-qr-signin";
+import { createStartHandler } from "telegram-qr-signin/bot";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, ALLOWED_IDS } = process.env;
@@ -30,6 +30,10 @@ const auth = createTelegramQrAuth({
   // Never do this in production.
   session: { secret: process.env.SESSION_SECRET ?? "dev-only-secret", secure: false },
   branding: { heading: "Node demo", subtitle: "Scan with Telegram. Nothing to type." },
+  // The QR encodes https://t.me/<bot>?start=... by default. Once this runs behind HTTPS on a
+  // domain of yours, set qrOrigin and the QR encodes https://<that domain>/auth/q/<token> instead,
+  // which redirects to the same t.me link (see "Deploying" in the README).
+  // qrOrigin: "https://app.example.com",
 });
 
 // ---- The web half -----------------------------------------------------------------------------

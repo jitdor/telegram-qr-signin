@@ -1,4 +1,4 @@
-// Package telegramqrauth verifies and drives telegram-qr-auth sign-ins from Go.
+// Package telegramqrauth verifies and drives telegram-qr-signin sign-ins from Go.
 //
 // Go does not run the package (it is JavaScript) and does not need to. The package's web half runs
 // once as a Worker at, say, https://auth.example.com. Go either verifies the signed session it
@@ -202,6 +202,7 @@ func FromContext(ctx context.Context) (Session, bool) {
 type Challenge struct {
 	Token     string `json:"token"`
 	DeepLink  string `json:"deepLink"`
+	QRLink    string `json:"qrLink"` // what SVG encodes: DeepLink, or https://<qrOrigin>/auth/q/<token>
 	SVG       string `json:"svg"`
 	ExpiresIn int    `json:"expiresIn"`
 	PollPath  string `json:"pollPath"`

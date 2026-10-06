@@ -1,4 +1,4 @@
-# telegram-qr-auth
+# telegram-qr-signin
 
 **Telegram as an identity provider. One QR scan. Zero user input.**
 
@@ -31,7 +31,7 @@ where a scan carries a server-chosen nonce back to your own code.
 That is what this package packages: the deep-link dance, the one-time token store, the QR
 rendering, the session cookie, and the authorization checks — as pieces you can each swap out.
 
-|                          | Login Widget         | telegram-qr-auth              |
+|                          | Login Widget         | telegram-qr-signin              |
 | ------------------------ | -------------------- | ----------------------------- |
 | User input               | Phone number + code  | **None**                      |
 | Works from a laptop      | Yes                  | Yes (scan with your phone)    |
@@ -81,7 +81,7 @@ the store is injected rather than in-process.
 Not on npm — install straight from GitHub:
 
 ```bash
-npm install github:jitdor/telegram-qr-auth
+npm install github:jitdor/telegram-qr-signin
 ```
 
 This tracks `main`, which is the supported version — there are no release tags to pin. npm records
@@ -89,17 +89,44 @@ the exact commit it fetched in your lockfile, so **commit `package-lock.json`**:
 reproducible, and you only move when you choose to:
 
 ```bash
-npm update telegram-qr-auth      # fetch the latest main and record the new commit
+npm update telegram-qr-signin      # fetch the latest main and record the new commit
 ```
 
 **Knowing when there is an update.** There is no version number to watch. Follow the commit feed
-(`https://github.com/jitdor/telegram-qr-auth/commits/main.atom`) in a feed reader, or use
+(`https://github.com/jitdor/telegram-qr-signin/commits/main.atom`) in a feed reader, or use
 GitHub's **Watch → Custom** on the repo. Changes that alter behaviour are called out in the commit
 message and the pull request title, so skim those before running `npm update`.
 
-It lands in `node_modules/telegram-qr-auth` and imports by that name either way. Vendoring the
+It lands in `node_modules/telegram-qr-signin` and imports by that name either way. Vendoring the
 `src/` directory into your own repo is also a legitimate option: it is nine dependency-free ESM
 files with no build step, and that is partly the point.
+
+### Coming from `telegram-qr-auth`
+
+This package used to be called `telegram-qr-auth` (repo `jitdor/telegram-qr-auth`). Only the name
+changed. To move over:
+
+```bash
+npm uninstall telegram-qr-auth
+npm install github:jitdor/telegram-qr-signin
+```
+
+Then change your import paths: `"telegram-qr-auth"` becomes `"telegram-qr-signin"`, and so do the
+subpaths (`/do`, `/bot`, `/oidc`, `/stores`, `/gates`, `/qr`, `/session`). Also update any
+`wrangler d1 execute --file=node_modules/telegram-qr-auth/migrations/...` commands in your scripts.
+
+Everything else stays as it was, so a rename alone signs no one out and needs no redeploy of
+anything but your own code:
+
+- Exported names: `createTelegramQrAuth`, `defineQrAuthStorage` and the rest.
+- Session cookies and bearer assertions: the signing key label is still
+  `TelegramQrAuthSessionKey`, so existing sessions stay valid and the
+  [known-answer vector](#the-known-answer-vector) is unchanged.
+- The `X-Telegram-Qr-Auth` header on the sign-in page, which service workers check for.
+- Your Durable Object class and bindings, your KV, D1 and OIDC data.
+
+GitHub redirects the old repo URL, so an existing `github:jitdor/telegram-qr-auth` dependency keeps
+installing until you switch. It installs under the old name, though, so switch both together.
 
 ---
 
@@ -114,7 +141,7 @@ wrangler kv namespace create LOGINS
 **2. The web half:**
 
 ```js
-import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-auth";
+import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-signin";
 
 const auth = (env) => createTelegramQrAuth({
   botToken: env.TELEGRAM_BOT_TOKEN,
@@ -128,7 +155,7 @@ export default {
   async fetch(request, env) {
     const a = auth(env);
 
-    // /auth/login, /auth/poll, /auth/logout, /auth/qr — returns null for anything else
+    // /auth/login, /auth/poll, /auth/logout, /auth/qr, /auth/q/<token> — null for anything else
     const handled = await a.handle(request);
     if (handled) return handled;
 
@@ -143,7 +170,7 @@ export default {
 **3. The bot half** — in the Worker that receives your bot's webhook:
 
 ```js
-import { createWebhookHandler } from "telegram-qr-auth/bot";
+import { createWebhookHandler } from "telegram-qr-signin/bot";
 
 // as a whole endpoint...
 export default { fetch: (req, env) => createWebhookHandler(auth(env), { secretToken: env.HOOK_SECRET })(req) };
@@ -182,6 +209,90 @@ Node version in [`examples/node-server/`](examples/node-server/server.mjs).
 
 ---
 
+## Deploying
+
+### What the QR points at
+
+**Default: `https://t.me/<bot>?start=…`.** Nothing to configure. It is an https link, so a phone
+camera offers to open it, and Telegram's t.me page hands off to the app on every platform, with or
+without the app installed. The QR never encodes a `tg://` link: many Android cameras decode one
+but treat it as plain text, with no button to tap. (`tg://` is used only for the on-page button
+and for clicking the QR on a computer, where no camera is involved.)
+
+**Optional: your own domain, with `qrOrigin`.** Give the package an https domain you serve the app
+at, and the QR encodes an address there instead, which redirects to the same t.me link:
+
+```js
+createTelegramQrAuth({ ..., qrOrigin: "https://app.example.com" });
+```
+
+```
+phone camera → https://app.example.com/auth/q/<token> → 302 → https://t.me/yourbot?start=app_<token> → Telegram
+```
+
+What that buys you:
+
+- **The user sees whose site it is.** The camera preview shows `app.example.com`, not `t.me`. That
+  is your brand, and one more chance to spot a phishing QR (see
+  [QR phishing](#qr-phishing--read-this-one)).
+- **A dead code says so.** A code that expired or was already used gets a short "this sign-in code
+  has ended" page (HTTP 410) instead of opening Telegram for a `/start` that can only fail.
+- **A web link every camera recognises.** If some scanner in your users' hands is unsure about
+  `t.me`, a plain https address on your domain removes the doubt.
+
+The cost is one extra hop through your app on every scan, and a domain you have to keep pointing
+at it. If you don't want that, leave `qrOrigin` unset.
+
+Opening `/auth/q/<token>` is read-only. It neither confirms nor spends the token, so link previews
+and scanner apps that prefetch URLs do no harm: only a `/start` from the scanner's own Telegram
+account signs anyone in. The redirect only ever goes to `t.me/<botUsername>`, so it cannot be used
+as an open redirect. Nothing on the Telegram side changes: same bot, same `/start` payload, same
+webhook.
+
+### Turning on `qrOrigin`
+
+1. **Pick the domain.** It must be https and must reach the app that holds the login store: a
+   custom domain or route on the Worker, its `workers.dev` hostname, or the public hostname of a
+   Node, Bun or Deno server behind your proxy. Only the origin is used; a path in the value is
+   ignored.
+2. **Route `/auth/q/*` to the package on that domain.** `auth.handle(request)` already does, as it
+   handles everything under `basePath` (`/auth` by default; the QR uses `<basePath>/q/<token>`). If
+   you route the endpoints yourself instead of calling `handle`, send `${auth.paths.scan}/<token>`
+   to `auth.scan(request)` as well.
+3. **Set it in config.** On Cloudflare, keep it in a var so each environment can have its own:
+
+   ```jsonc
+   // wrangler.jsonc
+   "vars": { "QR_ORIGIN": "https://app.example.com" }
+   ```
+
+   ```js
+   qrOrigin: env.QR_ORIGIN,     // unset → the default t.me QR
+   ```
+
+   The bot half does not need it; only the half that renders QRs does.
+
+The QR uses `qrOrigin` whichever hostname served the sign-in page, so a page loaded from
+`localhost` while developing still gets a QR that a phone can open, as long as the domain itself is
+live.
+
+### Checking a deployment
+
+1. Open the sign-in page on a computer, then scan it with the **phone's own camera app**, not the
+   scanner inside Telegram. The camera should offer to open `t.me/…` (default) or your domain (with
+   `qrOrigin`), and tapping that should land in the bot's chat in Telegram.
+2. With `qrOrigin`: copy the link the camera shows and open it again after signing in. You should
+   get the "code has ended" page, not Telegram.
+
+`GET /auth/qr` returns the exact address the QR encodes as `qrLink`, which is handy for checking
+from a script:
+
+```bash
+curl -s https://app.example.com/auth/qr | jq -r .qrLink
+```
+
+---
+
 ## Authorization
 
 Authentication ("who is this?") is identical for every app. Authorization ("do they get in?") never
@@ -194,7 +305,7 @@ async (user, ctx) => boolean | { ok: boolean, reason?: string }
 None of these need a database — they either ask Telegram or read a string.
 
 ```js
-import { chatMember, chatMemberOfAny, chatMemberOfAll, allowlist, denylist, every, some, anyUser } from "telegram-qr-auth";
+import { chatMember, chatMemberOfAny, chatMemberOfAll, allowlist, denylist, every, some, anyUser } from "telegram-qr-signin";
 
 chatMember({ chatId: "-1001234567890" })              // the group IS the access list (a muted
                                                       // user counts only while still in it)
@@ -275,7 +386,7 @@ new MemoryLoginStore()
 
 ```js
 import { DurableObject } from "cloudflare:workers";
-import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-auth/do";
+import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-signin/do";
 export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 // wrangler.jsonc: durable_objects.bindings [{ name: "QRAUTH_DO", class_name: "QrAuthStorage" }]
 //                 migrations [{ tag: "v1", new_sqlite_classes: ["QrAuthStorage"] }]
@@ -284,7 +395,7 @@ export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 It is strongly consistent and `confirm` is atomic, like D1, but the object creates its own tables, so
 there is nothing to provision or migrate. It has its own entry point so deployments that don't use
 Durable Objects (or OIDC) never load that code. For the OIDC provider use `DoOidcStore`, from the
-same `telegram-qr-auth/do` entry point (also re-exported by `telegram-qr-auth/oidc`); one object can
+same `telegram-qr-signin/do` entry point (also re-exported by `telegram-qr-signin/oidc`); one object can
 hold both. If the bot is a separate Worker, bind the
 class there with `script_name`, and use the same `name` on both sides.
 
@@ -301,7 +412,7 @@ both atomic by construction) or `DoLoginStore`.
 D1 needs its table created once:
 
 ```bash
-wrangler d1 execute my-db --remote --file=node_modules/telegram-qr-auth/migrations/d1.sql
+wrangler d1 execute my-db --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql
 ```
 
 ### Writing a store
@@ -345,9 +456,11 @@ branding: {
 }
 ```
 
-**The QR is always a link.** The QR image encodes the `https://t.me/<bot>?start=…` deep link,
-because that is what a phone camera can open. Clicking the QR on a computer, and the "Open Telegram
-to sign in" button that touch devices get instead, both use the app link
+**The QR is always an https link.** The QR image encodes the `https://t.me/<bot>?start=…` deep
+link, or with `qrOrigin` set an address on your own domain that redirects to it (see
+[Deploying](#what-the-qr-points-at)), because an https link is what a phone camera can open.
+Clicking the QR on a computer, and the "Open Telegram to sign in" button that touch devices get
+instead, both use the app link
 `tg://resolve?domain=<bot>&start=…`. That opens the installed Telegram app directly, without the
 t.me web page, the "Open in Telegram?" prompt and the extra browser tab that the https link leaves
 behind. The sign-in page itself stays put and keeps polling. `tg://` is handled by Telegram on
@@ -359,17 +472,18 @@ The page polls straight away when its tab becomes visible again, so coming back 
 not mean waiting out a throttled background timer.
 
 Text is customisable via `branding.mobileLinkText`, `mobileSubtitle`, `qrHintText` and
-`qrLinkTitle`. A custom `renderLoginPage` should keep this: encode `deepLink` in the QR, and link
+`qrLinkTitle`; the page a phone sees for an ended code via `scanEndedHeading` and `scanEndedText`.
+A custom `renderLoginPage` should keep this: show `qrSvg` (it already encodes `qrLink`), and link
 the QR and the button to `appLink`, in the same tab.
 
 Or replace the page entirely:
-`renderLoginPage({ token, deepLink, appLink, qrSvg, error, pollPath, pollIntervalMs, redirectTo })`
+`renderLoginPage({ token, deepLink, appLink, qrLink, qrSvg, error, pollPath, pollIntervalMs, redirectTo })`
 returns an HTML string. The contract a replacement must keep is polling `pollPath` and handling the
 five statuses in `POLL_STATUSES`: `pending` · `confirmed` · `expired` · `invalid` · `denied`. The
 built-in page's polling script is exported, so a custom page only needs to supply markup:
 
 ```js
-import { pollScript, escapeHtml } from "telegram-qr-auth";
+import { pollScript, escapeHtml } from "telegram-qr-signin";
 
 renderLoginPage: ({ token, appLink, qrSvg, pollPath, pollIntervalMs, redirectTo }) => `
   <!doctype html>
@@ -390,8 +504,9 @@ status indicator can be styled in CSS alone. Escape what you interpolate into th
 as above; `pollScript` already makes its own values safe inside `<script>`.
 
 Rendering your own UI entirely? `GET /auth/qr` returns
-`{ token, deepLink, appLink, svg, expiresIn, pollPath }` as JSON, or call `auth.beginLogin()`
-directly.
+`{ token, deepLink, appLink, qrLink, svg, expiresIn, pollPath }` as JSON, or call
+`auth.beginLogin({ request })` directly. If you draw the QR yourself, encode `qrLink`, not
+`deepLink`.
 
 ### Returning to the page that was asked for
 
@@ -432,13 +547,13 @@ users in, that assumption breaks in a specific way: HMAC verification and HMAC f
 key, so a relying party that can check a token can also mint one — for any user, to any of your
 apps.
 
-`telegram-qr-auth/oidc` is the answer to that: a standards-compliant OpenID Connect provider with
+`telegram-qr-signin/oidc` is the answer to that: a standards-compliant OpenID Connect provider with
 the QR scan as its authentication method. ES256 signing, published JWKS, per-client audiences,
 PKCE, consent, and refresh rotation with reuse detection. Relying parties integrate with a stock
 OIDC library and never learn Telegram is involved.
 
 ```js
-import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-auth/oidc";
+import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-signin/oidc";
 
 const oidc = createOidcProvider({
   auth,                                        // your createTelegramQrAuth instance
@@ -505,6 +620,10 @@ Working ports, each carrying the same known-answer test vector:
 | JS / Workers | `auth.guard()` | built in | covered by the package's own tests |
 
 All standard library — `hmac`/`hashlib`, `crypto/hmac`, `hash_hmac`, `HMACSHA256`.
+
+The SVG that `/auth/qr` hands a client encodes its `qrLink`: the t.me link, or, if the auth
+service sets `qrOrigin`, the service's `https://<qrOrigin>/auth/q/<token>`. Draw that, not
+`deepLink`, if a client renders its own QR.
 
 ### Getting the session to your app
 
@@ -580,13 +699,16 @@ whose screen was scanned.
 
 Mitigations here, and their honest limits:
 
-1. **Context in the confirmation message.** The bot tells the user what they just signed into —
+1. **Your domain in the camera preview** (opt-in, `qrOrigin`). The QR then encodes
+   `https://<your domain>/auth/q/…`, so a phone camera shows your hostname before the user opens
+   anything. A QR lifted from another site shows that site's domain, or `t.me`.
+2. **Context in the confirmation message.** The bot tells the user what they just signed into —
    origin, browser, IP — captured when the QR was minted (`captureClient`, on by default). Someone
    who scans a QR while sitting at their own laptop and is told they just signed into
    `https://not-your-app.example` from `Chrome on Windows` in another country has a real chance of
    noticing. This costs nothing and is on by default.
-2. **A tight TTL** shrinks the window for a QR harvested and re-displayed later.
-3. **A gate that means something.** `chatMember` limits the blast radius to people already in your
+3. **A tight TTL** shrinks the window for a QR harvested and re-displayed later.
+4. **A gate that means something.** `chatMember` limits the blast radius to people already in your
    group.
 
 If your threat model includes deliberate phishing of your users, add an explicit confirmation step:
@@ -644,6 +766,8 @@ createTelegramQrAuth({
   tokenTtlSeconds: 600,
   tokenBytes: 16,
   basePath: "/auth",
+  qrOrigin,                  // optional, e.g. "https://app.example.com": the QR encodes
+                             // <qrOrigin>/auth/q/<token> → t.me. Unset: the t.me link itself
   redirectTo: "/",           // where the page goes after sign-in
   pollIntervalMs: 2000,
   captureClient: true,       // record origin/IP/UA at mint time for the bot's message
@@ -661,10 +785,12 @@ Returned object:
 | `guard(request, {redirectTo, onDenied})` | web | `{ok:true, session}` or `{ok:false, reason, response}` |
 | `getSession(request)`   | web     | Verified claims, signature+expiry only, no gate        |
 | `verifyAssertion(value)`| web     | Same, for an `Authorization: Bearer` value             |
-| `beginLogin({request})` | web     | `{ token, deepLink, appLink, payload, svg, expiresIn }` |
+| `beginLogin({request})` | web     | `{ token, deepLink, appLink, qrLink, payload, svg, expiresIn }` |
 | `loginPage/loginResponse` | web   | Render the sign-in page yourself                       |
 | `logoutResponse({clearSiteData})` | web | 302 + cleared cookie (+ `Clear-Site-Data`)     |
 | `poll(request)`         | web     | The poll endpoint, if you route it yourself            |
+| `scan(request)`         | web     | The `/auth/q/<token>` endpoint, ditto                  |
+| `paths`                 | web     | `{ poll, login, logout, qr, scan }`                    |
 | `handleStart({text,from})` | bot  | Parse + confirm + a reply string                       |
 | `confirm({token,user})` | bot     | The raw confirm, for custom bot flows                  |
 | `parseStartPayload(text)` | bot   | Token for this namespace, or `null`                    |

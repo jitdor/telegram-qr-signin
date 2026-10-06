@@ -14,9 +14,9 @@
 //   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<worker>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 
 import { DurableObject } from "cloudflare:workers";
-import { createTelegramQrAuth, KVLoginStore, chatMember, escapeHtml } from "telegram-qr-auth";
-import { DoLoginStore, defineQrAuthStorage } from "telegram-qr-auth/do";
-import { createWebhookHandler } from "telegram-qr-auth/bot";
+import { createTelegramQrAuth, KVLoginStore, chatMember, escapeHtml } from "telegram-qr-signin";
+import { DoLoginStore, defineQrAuthStorage } from "telegram-qr-signin/do";
+import { createWebhookHandler } from "telegram-qr-signin/bot";
 
 // The Durable Object class, needed only if you bind QRAUTH_DO (see wrangler.jsonc). Harmless to
 // export otherwise.
@@ -52,6 +52,10 @@ function buildAuth(env) {
     // doesn't sign everyone out (and vice versa).
     session: { secret: env.SESSION_SECRET ?? env.TELEGRAM_BOT_TOKEN },
 
+    // Optional: put your own domain in the QR instead of t.me. Scans then go through
+    // https://<QR_ORIGIN>/auth/q/<token>, which redirects to Telegram. See "Deploying" in the README.
+    qrOrigin: env.QR_ORIGIN,
+
     branding: {
       title: "Demo — Sign in",
       heading: "📈 Demo Dashboard",
@@ -71,8 +75,9 @@ export default {
       return createWebhookHandler(auth, { secretToken: env.TELEGRAM_WEBHOOK_SECRET })(request);
     }
 
-    // /auth/login, /auth/poll, /auth/logout, /auth/qr. Returns null for anything else, so it
-    // composes with whatever routing you already have.
+    // /auth/login, /auth/poll, /auth/logout, /auth/qr, and /auth/q/<token> (the QR's address when
+    // `qrOrigin` is set). Returns null for anything else, so it composes with whatever routing you
+    // already have.
     const handled = await auth.handle(request);
     if (handled) return handled;
 

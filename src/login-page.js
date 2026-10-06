@@ -1,12 +1,13 @@
 // The default sign-in page: a QR, a status line, and a way in for people who cannot scan.
 //
-// The QR image encodes the https t.me deep link, because that is what a phone camera can open.
-// Clicking the QR (on a computer) and the "Open Telegram" button (on a phone or tablet) use the
-// tg:// app link instead, which goes straight to the installed Telegram app rather than through a
-// t.me web page, an "Open in Telegram?" prompt and a leftover browser tab. Opening an app link
-// does not navigate this page away, so it stays put and keeps polling. No framework, no bundler,
-// no external requests — it is one self-contained HTML string, which is what lets a consuming app
-// be a single file with no build step.
+// The QR image encodes an https link — the t.me deep link, or with `qrOrigin` set an address on
+// that domain which redirects to it — because that is what a phone camera can open. Clicking the
+// QR (on a computer) and the "Open Telegram" button (on a phone or tablet) use the tg:// app link
+// instead, which goes straight to the installed Telegram app rather than through a t.me web page,
+// an "Open in Telegram?" prompt and a leftover browser tab. Opening an app link does not navigate
+// this page away, so it stays put and keeps polling. No framework, no bundler, no external
+// requests — it is one self-contained HTML string, which is what lets a consuming app be a single
+// file with no build step.
 //
 // Replace it wholesale by passing `renderLoginPage` to createTelegramQrAuth; restyle it by passing
 // `branding`. A replacement can reuse the polling script via `pollScript()` and supply only the
@@ -26,6 +27,8 @@ export const DEFAULT_BRANDING = {
   deniedText: "Your Telegram account isn't allowed to sign in here.",
   retryText: "Get a new code",
   mobileLinkText: "Open Telegram",
+  scanEndedHeading: "This sign-in code has ended",
+  scanEndedText: "It expired or was already used. Go back to the sign-in page on your computer for a new code.",
   accent: "#2aabee",
   background: "#0e1a2f",
   gradientFrom: "#2aabee",
@@ -43,9 +46,11 @@ const PLANE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 3
 /**
  * @param {object} params
  * @param {string} params.token       The pending login token, handed to the polling script.
- * @param {string} params.deepLink    https://t.me/<bot>?start=<payload> — what the QR encodes.
+ * @param {string} params.deepLink    https://t.me/<bot>?start=<payload>.
  * @param {string} [params.appLink]   tg://resolve?domain=<bot>&start=<payload> — what the button
  *   and a click on the QR open. Derived from `deepLink` when omitted.
+ * @param {string} [params.qrLink]    What `qrSvg` encodes: `deepLink`, or
+ *   https://<qrOrigin>/auth/q/<token> when `qrOrigin` is set.
  * @param {string} params.qrSvg       Inline SVG markup from qr.js.
  * @param {string} [params.error]     Message to show above the QR (e.g. "you were removed").
  * @param {string} params.pollPath    Absolute path the page should poll.
@@ -173,6 +178,42 @@ ${pollScript({
   ids: { status: "tqa-status", qr: "tqa-qr", hide: ["tqa-open", "tqa-how", "tqa-or", "tqa-hint"] },
 })}
 </script>
+</body>
+</html>`;
+}
+
+/**
+ * What a phone shows when it opens /auth/q/<token> for a code that expired, was already used or
+ * never existed. Takes the sign-in page's `branding`.
+ */
+export function renderScanEndedPage({ branding: overrides } = {}) {
+  const branding = { ...DEFAULT_BRANDING, ...(overrides ?? {}) };
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>${escapeHtml(branding.title)}</title>
+${branding.headHtml}
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px;
+    background: ${branding.background}; color: #111a2c;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { width: 100%; max-width: 23rem; background: #fbfbfd; border-radius: 22px; padding: 28px 24px; text-align: center; }
+  h1 { margin: 0; font-size: 1.3rem; line-height: 1.25; letter-spacing: -0.02em; }
+  p { margin: 10px 0 0; color: #5e6779; font-size: 0.92rem; text-wrap: balance; }
+</style>
+</head>
+<body>
+  <main>
+    ${branding.logoHtml}
+    <h1>${escapeHtml(branding.scanEndedHeading)}</h1>
+    <p>${escapeHtml(branding.scanEndedText)}</p>
+  </main>
 </body>
 </html>`;
 }

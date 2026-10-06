@@ -1,6 +1,6 @@
 <?php
 /**
- * telegram-qr-auth — PHP verifier.
+ * telegram-qr-signin — PHP verifier.
  *
  * PHP cannot run the package (it is JavaScript), and it does not need to. The package's *web half*
  * runs once as a small Worker at, say, https://auth.example.com; PHP never mints tokens, never

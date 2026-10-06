@@ -84,7 +84,7 @@ export function createOidcProvider(config) {
     now = () => Math.floor(Date.now() / 1000),
   } = config;
 
-  if (!auth) throw new Error("createOidcProvider: `auth` (a telegram-qr-auth instance) is required");
+  if (!auth) throw new Error("createOidcProvider: `auth` (a telegram-qr-signin instance) is required");
   if (!issuer) throw new Error("createOidcProvider: `issuer` is required");
   if (!Array.isArray(keys) || !keys.length) throw new Error("createOidcProvider: `keys` is required (see loadSigningKeys)");
   if (!clients) throw new Error("createOidcProvider: `clients` registry is required");

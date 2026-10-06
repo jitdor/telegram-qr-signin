@@ -1,4 +1,4 @@
-// telegram-qr-auth/oidc — a standards-compliant OpenID Connect provider whose authentication
+// telegram-qr-signin/oidc — a standards-compliant OpenID Connect provider whose authentication
 // method is a Telegram QR scan.
 //
 // Use this instead of the base package when apps you do not control need to sign users in. The

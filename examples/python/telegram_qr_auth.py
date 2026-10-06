@@ -1,4 +1,4 @@
-"""telegram-qr-auth — Python client and verifier.
+"""telegram-qr-signin — Python client and verifier.
 
 Python does not run the package (it is JavaScript) and does not need to. The package's web half
 runs once as a Worker at, say, https://auth.example.com. Python either *verifies* the signed
@@ -146,7 +146,7 @@ class Client:
         self._opener = opener
 
     def begin(self) -> dict[str, Any]:
-        """Ask for a challenge: {token, deepLink, svg, expiresIn, pollPath}."""
+        """Ask for a challenge: {token, deepLink, qrLink, svg, expiresIn, pollPath}."""
         return self._get_json(f"{self.auth_base}/auth/qr")
 
     def wait_for_scan(self, token: str, *, interval: float = 2.0, timeout: float = 600.0) -> tuple[str, Session]:

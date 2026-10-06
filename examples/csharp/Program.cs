@@ -36,8 +36,8 @@ internal static class Program
 
         // The service already rendered a QR as SVG in challenge.Svg — write it to a file, or hand
         // it to whatever UI you have. For a terminal, a package like QRCoder or Net.Codecrete.QrCodeGenerator
-        // will draw the DeepLink as ASCII blocks; the deep link is all any QR renderer needs, and
-        // nothing about it is secret until it is displayed.
+        // will draw challenge.QrLink as ASCII blocks (it is what challenge.Svg encodes); a link is all
+        // any QR renderer needs, and nothing about it is secret until it is displayed.
         Console.WriteLine("Waiting for scan… (Ctrl+C to give up)");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(challenge.ExpiresIn + 5));

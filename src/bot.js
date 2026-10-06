@@ -116,7 +116,7 @@ export function createWebhookHandler(auth, options = {}) {
 }
 
 function defaultOnError(err) {
-  console.error("telegram-qr-auth: webhook update failed", err);
+  console.error("telegram-qr-signin: webhook update failed", err);
 }
 
 function formatClientContext(client) {

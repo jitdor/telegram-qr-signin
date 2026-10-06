@@ -1,4 +1,4 @@
-// Types for telegram-qr-auth/do — Durable Object storage for login records and the OIDC provider.
+// Types for telegram-qr-signin/do — Durable Object storage for login records and the OIDC provider.
 
 import type { LoginStore, LoginRecord, AuthUser, ClientContext } from "./index";
 import type { OidcStore } from "./oidc";

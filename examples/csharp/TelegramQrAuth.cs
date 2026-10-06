@@ -1,4 +1,4 @@
-// telegram-qr-auth — C# client and verifier.
+// telegram-qr-signin — C# client and verifier.
 //
 // Two independent pieces, and which one you want depends on what the C# is:
 //

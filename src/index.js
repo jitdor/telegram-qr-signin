@@ -1,4 +1,4 @@
-// telegram-qr-auth — Telegram as an identity provider, by QR scan, with zero user input.
+// telegram-qr-signin — Telegram as an identity provider, by QR scan, with zero user input.
 //
 // Start with `createTelegramQrAuth`; everything else here is either a piece it is built from or a
 // piece you swap out. See README.md for the 30-line quickstart.

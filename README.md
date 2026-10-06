@@ -1,4 +1,4 @@
-# telegram-qr-auth
+# telegram-qr-signin
 
 **Telegram as an identity provider. One QR scan. Zero user input.**
 
@@ -31,7 +31,7 @@ where a scan carries a server-chosen nonce back to your own code.
 That is what this package packages: the deep-link dance, the one-time token store, the QR
 rendering, the session cookie, and the authorization checks — as pieces you can each swap out.
 
-|                          | Login Widget         | telegram-qr-auth              |
+|                          | Login Widget         | telegram-qr-signin              |
 | ------------------------ | -------------------- | ----------------------------- |
 | User input               | Phone number + code  | **None**                      |
 | Works from a laptop      | Yes                  | Yes (scan with your phone)    |
@@ -81,7 +81,7 @@ the store is injected rather than in-process.
 Not on npm — install straight from GitHub:
 
 ```bash
-npm install github:jitdor/telegram-qr-auth
+npm install github:jitdor/telegram-qr-signin
 ```
 
 This tracks `main`, which is the supported version — there are no release tags to pin. npm records
@@ -89,17 +89,44 @@ the exact commit it fetched in your lockfile, so **commit `package-lock.json`**:
 reproducible, and you only move when you choose to:
 
 ```bash
-npm update telegram-qr-auth      # fetch the latest main and record the new commit
+npm update telegram-qr-signin      # fetch the latest main and record the new commit
 ```
 
 **Knowing when there is an update.** There is no version number to watch. Follow the commit feed
-(`https://github.com/jitdor/telegram-qr-auth/commits/main.atom`) in a feed reader, or use
+(`https://github.com/jitdor/telegram-qr-signin/commits/main.atom`) in a feed reader, or use
 GitHub's **Watch → Custom** on the repo. Changes that alter behaviour are called out in the commit
 message and the pull request title, so skim those before running `npm update`.
 
-It lands in `node_modules/telegram-qr-auth` and imports by that name either way. Vendoring the
+It lands in `node_modules/telegram-qr-signin` and imports by that name either way. Vendoring the
 `src/` directory into your own repo is also a legitimate option: it is nine dependency-free ESM
 files with no build step, and that is partly the point.
+
+### Coming from `telegram-qr-auth`
+
+This package used to be called `telegram-qr-auth` (repo `jitdor/telegram-qr-auth`). Only the name
+changed. To move over:
+
+```bash
+npm uninstall telegram-qr-auth
+npm install github:jitdor/telegram-qr-signin
+```
+
+Then change your import paths: `"telegram-qr-auth"` becomes `"telegram-qr-signin"`, and so do the
+subpaths (`/do`, `/bot`, `/oidc`, `/stores`, `/gates`, `/qr`, `/session`). Also update any
+`wrangler d1 execute --file=node_modules/telegram-qr-auth/migrations/...` commands in your scripts.
+
+Everything else stays as it was, so a rename alone signs no one out and needs no redeploy of
+anything but your own code:
+
+- Exported names: `createTelegramQrAuth`, `defineQrAuthStorage` and the rest.
+- Session cookies and bearer assertions: the signing key label is still
+  `TelegramQrAuthSessionKey`, so existing sessions stay valid and the
+  [known-answer vector](#the-known-answer-vector) is unchanged.
+- The `X-Telegram-Qr-Auth` header on the sign-in page, which service workers check for.
+- Your Durable Object class and bindings, your KV, D1 and OIDC data.
+
+GitHub redirects the old repo URL, so an existing `github:jitdor/telegram-qr-auth` dependency keeps
+installing until you switch. It installs under the old name, though, so switch both together.
 
 ---
 
@@ -114,7 +141,7 @@ wrangler kv namespace create LOGINS
 **2. The web half:**
 
 ```js
-import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-auth";
+import { createTelegramQrAuth, KVLoginStore, chatMember } from "telegram-qr-signin";
 
 const auth = (env) => createTelegramQrAuth({
   botToken: env.TELEGRAM_BOT_TOKEN,
@@ -143,7 +170,7 @@ export default {
 **3. The bot half** — in the Worker that receives your bot's webhook:
 
 ```js
-import { createWebhookHandler } from "telegram-qr-auth/bot";
+import { createWebhookHandler } from "telegram-qr-signin/bot";
 
 // as a whole endpoint...
 export default { fetch: (req, env) => createWebhookHandler(auth(env), { secretToken: env.HOOK_SECRET })(req) };
@@ -278,7 +305,7 @@ async (user, ctx) => boolean | { ok: boolean, reason?: string }
 None of these need a database — they either ask Telegram or read a string.
 
 ```js
-import { chatMember, chatMemberOfAny, chatMemberOfAll, allowlist, denylist, every, some, anyUser } from "telegram-qr-auth";
+import { chatMember, chatMemberOfAny, chatMemberOfAll, allowlist, denylist, every, some, anyUser } from "telegram-qr-signin";
 
 chatMember({ chatId: "-1001234567890" })              // the group IS the access list (a muted
                                                       // user counts only while still in it)
@@ -359,7 +386,7 @@ new MemoryLoginStore()
 
 ```js
 import { DurableObject } from "cloudflare:workers";
-import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-auth/do";
+import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-signin/do";
 export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 // wrangler.jsonc: durable_objects.bindings [{ name: "QRAUTH_DO", class_name: "QrAuthStorage" }]
 //                 migrations [{ tag: "v1", new_sqlite_classes: ["QrAuthStorage"] }]
@@ -368,7 +395,7 @@ export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 It is strongly consistent and `confirm` is atomic, like D1, but the object creates its own tables, so
 there is nothing to provision or migrate. It has its own entry point so deployments that don't use
 Durable Objects (or OIDC) never load that code. For the OIDC provider use `DoOidcStore`, from the
-same `telegram-qr-auth/do` entry point (also re-exported by `telegram-qr-auth/oidc`); one object can
+same `telegram-qr-signin/do` entry point (also re-exported by `telegram-qr-signin/oidc`); one object can
 hold both. If the bot is a separate Worker, bind the
 class there with `script_name`, and use the same `name` on both sides.
 
@@ -385,7 +412,7 @@ both atomic by construction) or `DoLoginStore`.
 D1 needs its table created once:
 
 ```bash
-wrangler d1 execute my-db --remote --file=node_modules/telegram-qr-auth/migrations/d1.sql
+wrangler d1 execute my-db --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql
 ```
 
 ### Writing a store
@@ -456,7 +483,7 @@ five statuses in `POLL_STATUSES`: `pending` · `confirmed` · `expired` · `inva
 built-in page's polling script is exported, so a custom page only needs to supply markup:
 
 ```js
-import { pollScript, escapeHtml } from "telegram-qr-auth";
+import { pollScript, escapeHtml } from "telegram-qr-signin";
 
 renderLoginPage: ({ token, appLink, qrSvg, pollPath, pollIntervalMs, redirectTo }) => `
   <!doctype html>
@@ -520,13 +547,13 @@ users in, that assumption breaks in a specific way: HMAC verification and HMAC f
 key, so a relying party that can check a token can also mint one — for any user, to any of your
 apps.
 
-`telegram-qr-auth/oidc` is the answer to that: a standards-compliant OpenID Connect provider with
+`telegram-qr-signin/oidc` is the answer to that: a standards-compliant OpenID Connect provider with
 the QR scan as its authentication method. ES256 signing, published JWKS, per-client audiences,
 PKCE, consent, and refresh rotation with reuse detection. Relying parties integrate with a stock
 OIDC library and never learn Telegram is involved.
 
 ```js
-import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-auth/oidc";
+import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-signin/oidc";
 
 const oidc = createOidcProvider({
   auth,                                        // your createTelegramQrAuth instance

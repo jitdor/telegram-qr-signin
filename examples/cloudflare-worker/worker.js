@@ -14,9 +14,9 @@
 //   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<worker>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 
 import { DurableObject } from "cloudflare:workers";
-import { createTelegramQrAuth, KVLoginStore, chatMember, escapeHtml } from "telegram-qr-auth";
-import { DoLoginStore, defineQrAuthStorage } from "telegram-qr-auth/do";
-import { createWebhookHandler } from "telegram-qr-auth/bot";
+import { createTelegramQrAuth, KVLoginStore, chatMember, escapeHtml } from "telegram-qr-signin";
+import { DoLoginStore, defineQrAuthStorage } from "telegram-qr-signin/do";
+import { createWebhookHandler } from "telegram-qr-signin/bot";
 
 // The Durable Object class, needed only if you bind QRAUTH_DO (see wrangler.jsonc). Harmless to
 // export otherwise.

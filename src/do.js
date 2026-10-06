@@ -1,7 +1,7 @@
 // Cloudflare Durable Object storage — one SQLite-backed object that can hold the login records,
 // the OIDC provider's state, or both.
 //
-// This lives behind its own entry point (`telegram-qr-auth/do`) on purpose: the object class runs
+// This lives behind its own entry point (`telegram-qr-signin/do`) on purpose: the object class runs
 // both the login store's SQL and the OIDC store's SQL, so importing it pulls in both. Keeping it
 // out of the main and `/stores` entry points means a deployment that does not use Durable Objects,
 // or does not use OIDC, never loads code it does not need.
@@ -25,7 +25,7 @@
 // Setup, in your Worker:
 //
 //     import { DurableObject } from "cloudflare:workers";
-//     import { defineQrAuthStorage } from "telegram-qr-auth/do";
+//     import { defineQrAuthStorage } from "telegram-qr-signin/do";
 //     export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 //
 // and in wrangler.jsonc:
@@ -168,7 +168,7 @@ for (const method of LOGIN_METHODS) {
 /**
  * OIDC provider state in the same Durable Object. Every operation is a single call into one object,
  * so code redemption and refresh rotation are atomic exactly as they are in D1OidcStore (which
- * supplies the SQL). Also exported from `telegram-qr-auth/oidc` for discoverability.
+ * supplies the SQL). Also exported from `telegram-qr-signin/oidc` for discoverability.
  *
  * @param {DurableObjectNamespace} binding  e.g. `env.QRAUTH_DO`.
  * @param {object} [options]

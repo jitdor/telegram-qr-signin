@@ -4,7 +4,7 @@
 -- bot that confirms them. On Cloudflare that usually means two Workers with a D1 binding each,
 -- pointing at the same database.
 --
---   wrangler d1 execute <your-db> --remote --file=node_modules/telegram-qr-auth/migrations/d1.sql
+--   wrangler d1 execute <your-db> --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql
 --
 -- Rows here are short-lived by design: one per sign-in attempt, swept a day after expiry by the
 -- store's own opportunistic cleanup. Nothing in this table is a durable record of anything — the

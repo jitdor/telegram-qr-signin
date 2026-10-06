@@ -132,7 +132,7 @@ export declare function parseIdList(ids: string | Array<string | number>): numbe
 export declare function splitList(values: string | Array<string | number>): string[];
 export declare function normalize(result: GateResult): { ok: boolean; reason?: string };
 
-/** The same gate builders, grouped — `import { gates } from "telegram-qr-auth"`. */
+/** The same gate builders, grouped — `import { gates } from "telegram-qr-signin"`. */
 export declare const gates: {
   anyUser: typeof anyUser;
   chatMember: typeof chatMember;

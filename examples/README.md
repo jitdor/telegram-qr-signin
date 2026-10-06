@@ -11,7 +11,7 @@ Every other app, in any language, only ever does one of two things:
 ```
                     ┌──────────────────────────────┐
                     │  auth.example.com (Worker)   │   ← the only place the JS package runs
-                    │  telegram-qr-auth            │
+                    │  telegram-qr-signin            │
                     └──────────────┬───────────────┘
                                    │  issues a signed session value
              ┌─────────────────────┼─────────────────────┐
@@ -105,5 +105,5 @@ you control that is a shrug — you already trust yourself. Hand that secret to 
 have handed them the ability to impersonate any of your users to any of your apps.
 
 When apps you do not control need to sign users in, use
-[`telegram-qr-auth/oidc`](../docs/oidc.md) instead: ES256 signatures, a published JWKS, and
+[`telegram-qr-signin/oidc`](../docs/oidc.md) instead: ES256 signatures, a published JWKS, and
 per-client audiences, so a relying party can verify and never forge.

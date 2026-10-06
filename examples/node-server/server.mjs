@@ -9,8 +9,8 @@
 // see "Writing a store" in the README).
 
 import { createServer } from "node:http";
-import { createTelegramQrAuth, MemoryLoginStore, allowlist, anyUser, TelegramClient, escapeHtml } from "telegram-qr-auth";
-import { createStartHandler } from "telegram-qr-auth/bot";
+import { createTelegramQrAuth, MemoryLoginStore, allowlist, anyUser, TelegramClient, escapeHtml } from "telegram-qr-signin";
+import { createStartHandler } from "telegram-qr-signin/bot";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, ALLOWED_IDS } = process.env;

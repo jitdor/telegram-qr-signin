@@ -1,5 +1,5 @@
 {
-  "name": "telegram-qr-auth",
+  "name": "telegram-qr-signin",
   "version": "0.6.2",
   "private": true,
   "description": "Telegram as an identity provider: sign in by scanning a QR code, with no phone number, no login code, and no typing at all.",
@@ -8,11 +8,11 @@
   "author": "Kenny",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jitdor/telegram-qr-auth.git"
+    "url": "git+https://github.com/jitdor/telegram-qr-signin.git"
   },
-  "homepage": "https://github.com/jitdor/telegram-qr-auth#readme",
+  "homepage": "https://github.com/jitdor/telegram-qr-signin#readme",
   "bugs": {
-    "url": "https://github.com/jitdor/telegram-qr-auth/issues"
+    "url": "https://github.com/jitdor/telegram-qr-signin/issues"
   },
   "keywords": [
     "telegram",

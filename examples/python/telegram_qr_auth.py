@@ -1,4 +1,4 @@
-"""telegram-qr-auth — Python client and verifier.
+"""telegram-qr-signin — Python client and verifier.
 
 Python does not run the package (it is JavaScript) and does not need to. The package's web half
 runs once as a Worker at, say, https://auth.example.com. Python either *verifies* the signed

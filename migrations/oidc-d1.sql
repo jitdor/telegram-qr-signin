@@ -1,6 +1,6 @@
 -- Schema for D1OidcStore (src/oidc/d1-store.js).
 --
---   wrangler d1 execute <your-db> --remote --file=node_modules/telegram-qr-auth/migrations/oidc-d1.sql
+--   wrangler d1 execute <your-db> --remote --file=node_modules/telegram-qr-signin/migrations/oidc-d1.sql
 --
 -- Unlike the login table, some of this is durable: consents live until withdrawn and refresh
 -- tokens for months. Back the database up accordingly. Codes and paused requests are short-lived

@@ -1,0 +1,14 @@
+{
+  "name": "docs-site",
+  "main": "site-worker.js",
+  "compatibility_date": "2026-07-02",
+
+  // SESSION_SECRET is a secret, and must differ per site.
+  "vars": { "TELEGRAM_BOT_USERNAME": "your_bot" },
+
+  // Both bindings point at the hub's resources — copy the ids from ./wrangler.jsonc.
+  "kv_namespaces": [{ "binding": "LOGINS", "id": "<same id as the hub>" }],
+  "d1_databases": [{ "binding": "HUB_DB", "database_name": "hub", "database_id": "<same id as the hub>" }],
+
+  "observability": { "enabled": true }
+}

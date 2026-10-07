@@ -189,6 +189,9 @@ if (signIn.matched) {
 `handleStart` returns `{ matched: false }` for anything that isn't a sign-in link for **this**
 namespace, so one bot can front several apps without them colliding.
 
+A bot has only one webhook, though, so with several apps the question is who receives it. For that,
+and for managing who may enter which app, see [One bot, many sites](#one-bot-many-sites-the-hub).
+
 `createWebhookHandler` always answers `200 ok`, even when handling an update throws (a Telegram
 outage while sending the reply, say). The sign-in is confirmed before the reply is sent, and
 Telegram holds every later update behind one it is retrying, so a single failed reply would
@@ -588,6 +591,42 @@ limiting is yours to wire up, and running an IdP for other people's users carrie
 no amount of test coverage addresses.
 
 Runnable example: [`examples/oidc-provider/`](examples/oidc-provider/worker.js).
+
+---
+
+## One bot, many sites: the hub
+
+A Telegram bot has one webhook, so serving several sites from one bot means something must receive
+every `/start` and hand it to the right site — and something must say who may enter which. The
+optional `telegram-qr-signin/hub` is both: **one shared webhook that knows every site, and an admin
+console for managing super admins and each site's users.**
+
+```js
+import { createHub, createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
+
+// The hub Worker: the only one with the bot token. Serves /telegram/webhook and /admin.
+const hub = createHub({
+  botToken, botUsername,
+  store: new KVLoginStore(env.LOGINS),   // shared with every site
+  registry: new D1HubStore(env.HUB_DB),  // the access list
+  superAdmins: "123456789",              // can always reach the console
+  sessionSecret: env.CONSOLE_SESSION_SECRET,
+  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+});
+export default { fetch: (request) => hub.fetch(request) };
+
+// Each site Worker: no bot token, no group id.
+const auth = createSiteAuth({ namespace: "docs", botUsername, store, registry, session: { secret } });
+```
+
+Super admins sign in to `/admin` with the same QR scan, register sites, grant and revoke people per
+site, approve people who were turned away, and see an audit log. Revocation applies on the person's
+next request. The console is server-rendered with no JavaScript, CSRF-protected, and every change is
+logged.
+
+**[docs/hub.md](docs/hub.md)** has the setup, the roles, what protects the console, and what it
+deliberately does not do (per-site administrators, rate limiting). Runnable example:
+[`examples/hub/`](examples/hub/hub-worker.js).
 
 ---
 

@@ -1,0 +1,29 @@
+{
+  "name": "telegram-qr-hub",
+  "main": "hub-worker.js",
+  "compatibility_date": "2026-07-02",
+
+  // Secrets (wrangler secret put), never here:
+  //   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, CONSOLE_SESSION_SECRET
+  "vars": {
+    "TELEGRAM_BOT_USERNAME": "your_bot",
+
+    // Telegram numeric user ids of the people who can always get into the console. Find yours by
+    // messaging @userinfobot. At least one is required.
+    "SUPER_ADMINS": "123456789"
+    // "QR_ORIGIN": "https://hub.example.com"
+  },
+
+  "kv_namespaces": [
+    // In-flight sign-ins. The SAME namespace id in every site's wrangler config.
+    { "binding": "LOGINS", "id": "<from `wrangler kv namespace create LOGINS`>" }
+  ],
+
+  "d1_databases": [
+    // The access list. The SAME database in every site's wrangler config. Apply
+    // migrations/hub-d1.sql once. Back it up: unlike the login store, this one is durable.
+    { "binding": "HUB_DB", "database_name": "hub", "database_id": "<from `wrangler d1 create hub`>" }
+  ],
+
+  "observability": { "enabled": true }
+}

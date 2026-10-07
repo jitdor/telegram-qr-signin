@@ -82,8 +82,20 @@ export function createStartHandler(auth, options = {}) {
  *   throws. Defaults to `console.error`. The webhook answers 200 either way.
  */
 export function createWebhookHandler(auth, options = {}) {
-  const { secretToken, onUnhandled, onError = defaultOnError, ...handlerOptions } = options;
-  const handleUpdate = createStartHandler(auth, handlerOptions);
+  const { secretToken, onUnhandled, onError, ...handlerOptions } = options;
+  return createUpdateEndpoint(createStartHandler(auth, handlerOptions), { secretToken, onUnhandled, onError });
+}
+
+/**
+ * The HTTP half of a webhook, for any `handleUpdate(update) => Promise<boolean>`: method check,
+ * secret-token check, JSON parse, and the always-200 acknowledgement. `createWebhookHandler` is this
+ * around one app's start handler; the hub (src/hub) is this around a handler that picks the app.
+ *
+ * @param {(update: object) => Promise<boolean>} handleUpdate  true if the update was handled.
+ * @param {object} [options]  `secretToken`, `onUnhandled`, `onError` — see createWebhookHandler.
+ */
+export function createUpdateEndpoint(handleUpdate, options = {}) {
+  const { secretToken, onUnhandled, onError = defaultOnError } = options;
 
   return async function handleRequest(request) {
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });

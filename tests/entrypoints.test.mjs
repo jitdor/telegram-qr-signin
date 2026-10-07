@@ -54,3 +54,28 @@ test("package.json exports a do entry point with types", () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(pkg.exports["./do"], { types: "./types/do.d.ts", default: "./src/do.js" });
 });
+
+test("the hub is its own entry point: nothing else loads it, and it loads neither OIDC nor Durable Objects", () => {
+  for (const entry of ["src/index.js", "src/stores/index.js", "src/bot.js", "src/oidc/index.js"]) {
+    assert.deepEqual(reachable(entry).filter((f) => f.startsWith("hub/")), [], `${entry} must not pull in the hub`);
+  }
+  const files = reachable("src/hub/index.js");
+  assert.deepEqual(files.filter((f) => f.startsWith("oidc/") || f === "do.js"), []);
+  assert.ok(files.includes("hub/console.js") && files.includes("hub/d1-store.js"));
+});
+
+test("package.json exports the hub entry point and its migration", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  assert.deepEqual(pkg.exports["./hub"], { types: "./types/hub.d.ts", default: "./src/hub/index.js" });
+  assert.equal(pkg.exports["./migrations/hub-d1.sql"], "./migrations/hub-d1.sql");
+});
+
+test("the hub entry point exports what its types and docs promise", async () => {
+  const mod = await import("../src/hub/index.js");
+  assert.deepEqual(Object.keys(mod).sort(), [
+    "ADMIN_NAMESPACE", "D1HubStore", "MemoryHubStore", "NAMESPACE_RE", "createHub", "createSiteAuth",
+    "hubGate", "parseRootAdmins", "parseTelegramId", "parseTelegramIds", "superAdminGate",
+  ]);
+  const types = readFileSync(join(ROOT, "types", "hub.d.ts"), "utf8");
+  for (const name of Object.keys(mod)) assert.match(types, new RegExp(`export declare (function|class|const) ${name}\\b`), `${name} is typed`);
+});

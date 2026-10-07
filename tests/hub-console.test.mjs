@@ -1,0 +1,532 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { makeRequest } from "./helpers.mjs";
+import {
+  ROOT,
+  ADMIN2,
+  ALICE,
+  BOB,
+  MALLORY,
+  ORIGIN,
+  makeHub,
+  signInToConsole,
+  csrfFor,
+  get,
+  post,
+  redirectTarget,
+} from "./hub-helpers.mjs";
+
+async function setup() {
+  const ctx = makeHub();
+  ctx.cookie = await signInToConsole(ctx.hub, ROOT);
+  return ctx;
+}
+
+/** Follows a 303 to its target page and returns its HTML. */
+async function follow(ctx, response, cookie = ctx.cookie) {
+  const target = redirectTarget(response);
+  const page = await get(ctx.hub, target.pathname + target.search, cookie);
+  return { target, html: await page.text(), status: page.status };
+}
+
+// --- Access to the console ---------------------------------------------------------------------
+
+test("signed out, the console shows the QR sign-in and nothing else", async () => {
+  const ctx = makeHub();
+  await ctx.registry.createNamespace({ namespace: "acme", name: "Acme" });
+  const page = await get(ctx.hub, "/admin");
+  const html = await page.text();
+  assert.match(html, /Hub admin/);
+  assert.match(html, /<svg/, "a QR code");
+  assert.doesNotMatch(html, /Acme/, "no site data to anyone who is not signed in");
+  assert.doesNotMatch(html, /name="csrf"/);
+});
+
+test("a valid cookie for someone who is not a super admin is refused", async () => {
+  const ctx = makeHub();
+  // Correctly signed, as if a site and the console shared a secret — the gate still has to say no.
+  const value = await ctx.hub.adminAuth.session.sign({ id: MALLORY.id, name: "Mallory", iat: Math.floor(Date.now() / 1000) });
+  const cookie = `hub_admin_session=${value}`;
+  const response = await get(ctx.hub, "/admin", cookie);
+  assert.equal(response.status, 403);
+  assert.doesNotMatch(await response.text(), /Super admins<\/h2>/);
+});
+
+test("a site's session cookie, even signed with the same secret, is not a console session", async () => {
+  const ctx = makeHub({ config: { sessionSecret: "shared-secret-shared-secret-0000" } });
+  const { createSessionCodec } = await import("../src/session.js");
+  // A site that (wrongly) reused the console's secret and the default key label.
+  const siteCodec = createSessionCodec({ secret: "shared-secret-shared-secret-0000", cookieName: "hub_admin_session" });
+  const forged = await siteCodec.sign({ id: ROOT.id, name: "Rhea", iat: Math.floor(Date.now() / 1000) });
+  const response = await get(ctx.hub, "/admin", `hub_admin_session=${forged}`);
+  const html = await response.text();
+  assert.match(html, /<svg/, "different key label, so the signature does not verify: it is the sign-in page");
+  assert.doesNotMatch(html, /name="csrf"/);
+});
+
+test("a bootstrap admin gets the dashboard, with security headers and no caching", async () => {
+  const ctx = await setup();
+  const response = await get(ctx.hub, "/admin", ctx.cookie);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("Content-Type"), /text\/html/);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+  assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+  const csp = response.headers.get("Content-Security-Policy");
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.doesNotMatch(csp, /script-src/, "the console ships no JavaScript, so none is allowed");
+  assert.doesNotMatch(await response.text(), /<script/i);
+});
+
+test("pages do not use Referrer-Policy: no-referrer, which makes browsers send `Origin: null` on their own forms", async () => {
+  // Found in a real browser: with no-referrer, Chrome and Firefox send `Origin: null` on a
+  // same-origin form POST, and the console's Origin check then refuses every form it served.
+  const ctx = await setup();
+  for (const path of ["/admin", "/admin/ns/ghost"]) {
+    const policy = (await get(ctx.hub, path, ctx.cookie)).headers.get("Referrer-Policy");
+    assert.equal(policy, "same-origin", path);
+  }
+  const redirected = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  assert.equal(redirected.headers.get("Referrer-Policy"), "same-origin");
+});
+
+test("the sign-in page cannot be framed either", async () => {
+  const ctx = makeHub();
+  const response = await get(ctx.hub, "/admin");
+  assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+  assert.match(response.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/);
+});
+
+test("the console cookie is scoped to the console path", async () => {
+  const ctx = makeHub();
+  const { token } = await ctx.hub.adminAuth.beginLogin();
+  await ctx.hub.handleUpdate({ message: { message_id: 1, chat: { id: 1 }, from: ROOT, text: `/start hub-admin_${token}` } });
+  const polled = await ctx.hub.fetch(makeRequest(`${ORIGIN}/admin/auth/poll?token=${token}`));
+  const header = polled.headers.get("Set-Cookie");
+  assert.match(header, /^hub_admin_session=/);
+  assert.match(header, /Path=\/admin(;|$)/);
+  assert.match(header, /HttpOnly/);
+  assert.match(header, /Secure/);
+  assert.match(header, /Max-Age=28800/);
+});
+
+test("removing a super admin ends their console access on the next request", async () => {
+  const ctx = await setup();
+  await ctx.registry.addAdmin({ id: ADMIN2.id });
+  const cookie = await signInToConsole(ctx.hub, ADMIN2);
+  assert.equal((await get(ctx.hub, "/admin", cookie)).status, 200);
+
+  await ctx.registry.removeAdmin(ADMIN2.id);
+  assert.equal((await get(ctx.hub, "/admin", cookie)).status, 403);
+});
+
+test("a registry outage on a console request is a retry, not a sign-out", async () => {
+  const ctx = makeHub();
+  await ctx.registry.addAdmin({ id: ADMIN2.id });
+  const cookie = await signInToConsole(ctx.hub, ADMIN2);
+  ctx.registry.isAdmin = async () => {
+    throw new Error("D1 is down");
+  };
+  const response = await get(ctx.hub, "/admin", cookie);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("Set-Cookie"), null);
+  assert.equal(ctx.errors.length > 0, true);
+});
+
+// --- CSRF and origin ---------------------------------------------------------------------------
+
+test("a POST without a valid CSRF token changes nothing", async () => {
+  const ctx = await setup();
+  for (const csrf of ["", "nope", "0".repeat(64)]) {
+    const response = await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme" }, { cookie: ctx.cookie, csrf });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "bad_request");
+  }
+  assert.equal(await ctx.registry.getNamespace("acme"), null);
+});
+
+test("a POST with no csrf field at all is refused", async () => {
+  const ctx = await setup();
+  const response = await ctx.hub.fetch(
+    new Request(`${ORIGIN}/admin/ns`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: ctx.cookie, Origin: ORIGIN },
+      body: new URLSearchParams({ namespace: "acme" }),
+    })
+  );
+  assert.equal(redirectTarget(response).searchParams.get("err"), "bad_request");
+  assert.equal(await ctx.registry.getNamespace("acme"), null);
+});
+
+test("one admin's CSRF token is worthless on another admin's session", async () => {
+  const ctx = await setup();
+  await ctx.registry.addAdmin({ id: ADMIN2.id });
+  const other = await signInToConsole(ctx.hub, ADMIN2);
+  const stolen = await csrfFor(ctx.hub, other);
+
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie, csrf: stolen });
+  assert.equal(redirectTarget(response).searchParams.get("err"), "bad_request");
+  assert.equal(await ctx.registry.getNamespace("acme"), null);
+});
+
+test("a token from before a fresh sign-in stops working", async () => {
+  const ctx = await setup();
+  const old = await csrfFor(ctx.hub, ctx.cookie);
+  await new Promise((resolve) => setTimeout(resolve, 1100)); // `iat` has one-second resolution
+  const fresh = await signInToConsole(ctx.hub, ROOT);
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: fresh, csrf: old });
+  assert.equal(redirectTarget(response).searchParams.get("err"), "bad_request");
+});
+
+test("a POST from another origin is refused even with a correct token", async () => {
+  const ctx = await setup();
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie, origin: "https://evil.example" });
+  assert.equal(redirectTarget(response).searchParams.get("err"), "bad_request");
+  const nullOrigin = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie, origin: "null" });
+  assert.equal(redirectTarget(nullOrigin).searchParams.get("err"), "bad_request");
+  assert.equal(await ctx.registry.getNamespace("acme"), null);
+});
+
+test("a POST that is not a form is refused, and so are methods the console does not use", async () => {
+  const ctx = await setup();
+  const json = await ctx.hub.fetch(
+    new Request(`${ORIGIN}/admin/ns`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: ctx.cookie, Origin: ORIGIN }, body: JSON.stringify({ namespace: "acme" }) })
+  );
+  assert.equal(redirectTarget(json).searchParams.get("err"), "bad_request");
+  for (const method of ["PUT", "DELETE", "PATCH"]) {
+    const response = await ctx.hub.fetch(new Request(`${ORIGIN}/admin/ns`, { method, headers: { Cookie: ctx.cookie } }));
+    assert.equal(response.status, 405, method);
+  }
+});
+
+test("a signed-out POST changes nothing and just shows the sign-in page", async () => {
+  const ctx = makeHub();
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme" });
+  assert.equal(await ctx.registry.getNamespace("acme"), null);
+  assert.notEqual(response.status, 303);
+});
+
+// --- Sites -------------------------------------------------------------------------------------
+
+test("adding a site registers it, audits it, and lands on its page", async () => {
+  const ctx = await setup();
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme dashboard" }, { cookie: ctx.cookie });
+  const { target, html, status } = await follow(ctx, response);
+
+  assert.equal(target.pathname, "/admin/ns/acme");
+  assert.equal(status, 200);
+  assert.match(html, /Acme dashboard/);
+  assert.match(html, /Site added/);
+  const site = await ctx.registry.getNamespace("acme");
+  assert.deepEqual([site.name, site.enabled, site.createdBy], ["Acme dashboard", true, ROOT.id]);
+  const [entry] = await ctx.registry.listAudit();
+  assert.deepEqual([entry.actor, entry.action, entry.target], [ROOT.id, "site.create", "acme"]);
+});
+
+test("site ids are validated: shape, the reserved console id, and duplicates", async () => {
+  const ctx = await setup();
+  const err = async (namespace) => redirectTarget(await post(ctx.hub, "/admin/ns", { namespace }, { cookie: ctx.cookie })).searchParams.get("err");
+
+  for (const bad of ["", "has_underscore", "x".repeat(25), "sp ace", "a/b", "../x", "<script>"]) {
+    assert.equal(await err(bad), "bad_namespace", JSON.stringify(bad));
+  }
+  assert.equal(await err("hub-admin"), "reserved_namespace");
+  assert.equal(await err("acme"), null);
+  assert.equal(await err("acme"), "site_exists");
+  assert.deepEqual((await ctx.registry.listNamespaces()).map((s) => s.namespace), ["acme"]);
+});
+
+test("a blank display name falls back to the id; saving changes name and state and logs both", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.getNamespace("acme")).name, "acme");
+
+  const saved = await post(ctx.hub, "/admin/ns/acme/update", { name: "Acme" }, { cookie: ctx.cookie }); // checkbox absent = off
+  assert.equal(redirectTarget(saved).searchParams.get("ok"), "site_saved");
+  const site = await ctx.registry.getNamespace("acme");
+  assert.deepEqual([site.name, site.enabled], ["Acme", false]);
+
+  await post(ctx.hub, "/admin/ns/acme/update", { name: "Acme", enabled: "1" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.getNamespace("acme")).enabled, true);
+
+  const detail = (await ctx.registry.listAudit()).filter((e) => e.action === "site.update").map((e) => e.detail);
+  assert.ok(detail.some((d) => /disabled/.test(d) && /Acme/.test(d)));
+  assert.ok(detail.some((d) => /enabled/.test(d)));
+});
+
+test("saving without changing anything writes no audit entry", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme" }, { cookie: ctx.cookie });
+  const before = (await ctx.registry.listAudit()).length;
+  await post(ctx.hub, "/admin/ns/acme/update", { name: "Acme", enabled: "1" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.listAudit()).length, before);
+});
+
+test("deleting a site needs the id typed back, and takes its people with it", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme" }, { cookie: ctx.cookie });
+  await ctx.registry.addGrant({ namespace: "acme", id: ALICE.id });
+
+  const wrong = await post(ctx.hub, "/admin/ns/acme/delete", { confirm: "ACME" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(wrong).searchParams.get("err"), "confirm_mismatch");
+  assert.ok(await ctx.registry.getNamespace("acme"));
+
+  const done = await post(ctx.hub, "/admin/ns/acme/delete", { confirm: "acme" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(done).searchParams.get("ok"), "site_deleted");
+  assert.equal(await ctx.registry.getNamespace("acme"), null);
+  assert.equal((await ctx.registry.access("acme", ALICE.id)).exists, false);
+  const entry = (await ctx.registry.listAudit())[0];
+  assert.deepEqual([entry.action, entry.target], ["site.delete", "acme"]);
+  assert.match(entry.detail, /1 people/);
+});
+
+test("actions on a site that does not exist say so instead of failing", async () => {
+  const ctx = await setup();
+  for (const path of ["/admin/ns/ghost/update", "/admin/ns/ghost/delete", "/admin/ns/ghost/grants"]) {
+    const response = await post(ctx.hub, path, { name: "x", confirm: "ghost", ids: "1" }, { cookie: ctx.cookie });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "site_missing", path);
+  }
+  assert.equal((await get(ctx.hub, "/admin/ns/ghost", ctx.cookie)).status, 404);
+});
+
+// --- User access -------------------------------------------------------------------------------
+
+test("granting access takes ids separated by commas, spaces and lines, and ignores repeats", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme" }, { cookie: ctx.cookie });
+
+  const response = await post(ctx.hub, "/admin/ns/acme/grants", { ids: "111, 222\n333  111;444", label: "Finance" }, { cookie: ctx.cookie });
+  const { target, html } = await follow(ctx, response);
+  assert.deepEqual([target.searchParams.get("ok"), target.searchParams.get("n")], ["grants_added", "4"]);
+  assert.match(html, /Granted access to 4 people/);
+
+  const grants = await ctx.registry.listGrants("acme");
+  assert.deepEqual(grants.map((g) => g.id).sort((a, b) => a - b), [111, 222, 333, 444]);
+  assert.ok(grants.every((g) => g.label === "Finance" && g.addedBy === ROOT.id));
+  const entry = (await ctx.registry.listAudit())[0];
+  assert.deepEqual([entry.action, entry.target], ["grant.add", "acme"]);
+  assert.match(entry.detail, /^4: /);
+
+  const again = await post(ctx.hub, "/admin/ns/acme/grants", { ids: "111, 222" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(again).searchParams.get("ok"), "grants_none");
+});
+
+test("a list with any bad entry adds nobody, so a typo is never half-applied", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  for (const ids of ["111, abc", "111, -5", "111, 0", "111, 1.5", "111, 99999999999999999999", "@alice"]) {
+    const response = await post(ctx.hub, "/admin/ns/acme/grants", { ids }, { cookie: ctx.cookie });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "bad_ids", ids);
+  }
+  assert.equal((await post(ctx.hub, "/admin/ns/acme/grants", { ids: "  ,, " }, { cookie: ctx.cookie })).headers.get("Location").includes("no_ids"), true);
+  assert.deepEqual(await ctx.registry.listGrants("acme"), []);
+});
+
+test("one submission is capped", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  const ids = Array.from({ length: 201 }, (_, n) => n + 1).join(",");
+  const response = await post(ctx.hub, "/admin/ns/acme/grants", { ids }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(response).searchParams.get("err"), "too_many_ids");
+  assert.deepEqual(await ctx.registry.listGrants("acme"), []);
+});
+
+test("revoking removes access at once and is audited", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  await ctx.registry.addGrant({ namespace: "acme", id: ALICE.id });
+
+  const response = await post(ctx.hub, `/admin/ns/acme/grants/${ALICE.id}/remove`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(response).searchParams.get("ok"), "grant_removed");
+  assert.equal((await ctx.registry.access("acme", ALICE.id)).granted, false);
+  assert.deepEqual((await ctx.registry.listAudit())[0].action, "grant.remove");
+
+  const bad = await post(ctx.hub, "/admin/ns/acme/grants/not-an-id/remove", {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(bad).searchParams.get("err"), "bad_id", "a non-numeric id never reaches the registry");
+});
+
+test("pending requests can be approved or dismissed; approval copies the person's name into the note", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  await ctx.registry.recordRequest({ namespace: "acme", user: { ...MALLORY, last_name: "Doe" } });
+  await ctx.registry.recordRequest({ namespace: "acme", user: BOB });
+
+  const page = await (await get(ctx.hub, "/admin/ns/acme", ctx.cookie)).text();
+  assert.match(page, /Waiting for approval/);
+  assert.match(page, /Mallory Doe \(@mal\)/);
+
+  const approved = await post(ctx.hub, `/admin/ns/acme/requests/${MALLORY.id}/approve`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(approved).searchParams.get("ok"), "request_approved");
+  const [grant] = await ctx.registry.listGrants("acme");
+  assert.deepEqual([grant.id, grant.label, grant.addedBy], [MALLORY.id, "Mallory Doe (@mal)", ROOT.id]);
+  assert.equal(await ctx.registry.getRequest("acme", MALLORY.id), null);
+
+  const dismissed = await post(ctx.hub, `/admin/ns/acme/requests/${BOB.id}/dismiss`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(dismissed).searchParams.get("ok"), "request_dismissed");
+  assert.equal((await ctx.registry.access("acme", BOB.id)).granted, false, "dismissing grants nothing");
+  assert.deepEqual((await ctx.registry.listRequests("acme")), []);
+
+  const gone = await post(ctx.hub, `/admin/ns/acme/requests/${BOB.id}/approve`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(gone).searchParams.get("err"), "request_gone");
+  assert.equal((await ctx.registry.access("acme", BOB.id)).granted, false, "a request that is gone cannot be approved");
+});
+
+// --- Super admins ------------------------------------------------------------------------------
+
+test("adding a super admin lets them in; removing them shuts the door again", async () => {
+  const ctx = await setup();
+  const added = await post(ctx.hub, "/admin/admins", { id: String(ADMIN2.id), label: "Ada" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(added).searchParams.get("ok"), "admin_added");
+  assert.deepEqual((await ctx.registry.listAdmins()).map((a) => [a.id, a.label, a.addedBy]), [[ADMIN2.id, "Ada", ROOT.id]]);
+
+  const adaCookie = await signInToConsole(ctx.hub, ADMIN2);
+  const dashboard = await (await get(ctx.hub, "/admin", adaCookie)).text();
+  assert.match(dashboard, /Ada/);
+
+  const removed = await post(ctx.hub, `/admin/admins/${ADMIN2.id}/remove`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(removed).searchParams.get("ok"), "admin_removed");
+  assert.equal((await get(ctx.hub, "/admin", adaCookie)).status, 403);
+  assert.deepEqual((await ctx.registry.listAudit()).map((e) => e.action).slice(0, 2), ["admin.remove", "admin.add"]);
+});
+
+test("a super admin does not get into any site just by being one", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.access("acme", ROOT.id)).granted, false);
+});
+
+test("bootstrap admins cannot be removed or re-added; you cannot remove yourself", async () => {
+  const ctx = await setup();
+  await ctx.registry.addAdmin({ id: ADMIN2.id });
+  const adaCookie = await signInToConsole(ctx.hub, ADMIN2);
+
+  const root = await post(ctx.hub, `/admin/admins/${ROOT.id}/remove`, {}, { cookie: adaCookie });
+  assert.equal(redirectTarget(root).searchParams.get("err"), "admin_root");
+  const self = await post(ctx.hub, `/admin/admins/${ADMIN2.id}/remove`, {}, { cookie: adaCookie });
+  assert.equal(redirectTarget(self).searchParams.get("err"), "admin_self");
+  const again = await post(ctx.hub, "/admin/admins", { id: String(ROOT.id) }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(again).searchParams.get("err"), "admin_exists");
+  assert.equal(await ctx.registry.isAdmin(ADMIN2.id), true);
+  assert.equal(await ctx.registry.isAdmin(ROOT.id), false, "bootstrap admins never become registry rows");
+
+  // A bootstrap admin can still sign in with the registry completely empty.
+  assert.equal((await get(ctx.hub, "/admin", ctx.cookie)).status, 200);
+});
+
+test("admin ids are validated, and unknown admins report as missing", async () => {
+  const ctx = await setup();
+  for (const id of ["", "abc", "-1", "0", "1.5", "12345678901234567"]) {
+    const response = await post(ctx.hub, "/admin/admins", { id }, { cookie: ctx.cookie });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "bad_id", JSON.stringify(id));
+  }
+  const missing = await post(ctx.hub, "/admin/admins/4242/remove", {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(missing).searchParams.get("err"), "admin_missing");
+  const dup = await post(ctx.hub, "/admin/admins", { id: "4242" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(dup).searchParams.get("ok"), "admin_added");
+  assert.equal(redirectTarget(await post(ctx.hub, "/admin/admins", { id: "4242" }, { cookie: ctx.cookie })).searchParams.get("err"), "admin_exists");
+});
+
+// --- Rendering ---------------------------------------------------------------------------------
+
+test("everything an admin or a stranger can type is escaped where it is shown", async () => {
+  const ctx = await setup();
+  const evil = `"><img src=x onerror=alert(1)>`;
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: evil }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/ns/acme/grants", { ids: "5", label: evil }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/admins", { id: "6", label: evil }, { cookie: ctx.cookie });
+  await ctx.registry.recordRequest({ namespace: "acme", user: { id: 7, first_name: evil, last_name: "<b>x</b>", username: evil } });
+
+  for (const path of ["/admin", "/admin/ns/acme"]) {
+    const html = await (await get(ctx.hub, path, ctx.cookie)).text();
+    assert.doesNotMatch(html, /<img src=x/, path);
+    assert.doesNotMatch(html, /<b>x<\/b>/, path);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/, path);
+  }
+});
+
+test("a signed-in name is escaped in the header too", async () => {
+  const ctx = makeHub();
+  const cookie = await signInToConsole(ctx.hub, { ...ROOT, first_name: "<script>alert(1)</script>" });
+  const html = await (await get(ctx.hub, "/admin", cookie)).text();
+  assert.doesNotMatch(html, /<script>alert/);
+});
+
+test("notices come from a fixed set of codes, so a crafted link cannot put words in the console's mouth", async () => {
+  const ctx = await setup();
+  for (const query of ["ok=%3Cscript%3Ealert(1)%3C/script%3E", "err=Your%20session%20expired.%20Rescan%20at%20evil.example", "ok=__proto__", "err=constructor", "ok=toString"]) {
+    const html = await (await get(ctx.hub, `/admin?${query}`, ctx.cookie)).text();
+    assert.doesNotMatch(html, /evil\.example|<script>alert|class="flash/, query);
+  }
+  const html = await (await get(ctx.hub, "/admin?ok=grants_added&n=3", ctx.cookie)).text();
+  assert.match(html, /Granted access to 3 people/);
+});
+
+test("the dashboard lists sites with their counts, and flags the bootstrap admin", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme dashboard" }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/ns", { namespace: "wiki", name: "Team wiki" }, { cookie: ctx.cookie });
+  await ctx.registry.addGrant({ namespace: "acme", id: 1 });
+  await ctx.registry.addGrant({ namespace: "acme", id: 2 });
+  await ctx.registry.recordRequest({ namespace: "wiki", user: { id: 3 } });
+  await ctx.registry.updateNamespace("wiki", { enabled: false });
+
+  const html = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
+  assert.match(html, /Acme dashboard/);
+  assert.match(html, /Team wiki/);
+  assert.match(html, /Hub configuration/);
+  assert.match(html, />Off</);
+  assert.match(html, /site\.create/, "recent activity is shown");
+  assert.match(html, new RegExp(`<code>${ROOT.id}</code> <span class="pill">you</span>`));
+});
+
+test("a failing registry on a page load is a 500, not a redirect loop; on a POST it returns to the dashboard", async () => {
+  const ctx = await setup();
+  const real = ctx.registry.listNamespaces.bind(ctx.registry);
+  ctx.registry.listNamespaces = async () => {
+    throw new Error("D1 is down");
+  };
+  const page = await get(ctx.hub, "/admin", ctx.cookie);
+  assert.equal(page.status, 500);
+  assert.doesNotMatch(await page.text(), /D1 is down/, "internal errors are not shown to the browser");
+
+  const csrf = await (async () => {
+    ctx.registry.listNamespaces = real;
+    const token = await csrfFor(ctx.hub, ctx.cookie);
+    ctx.registry.createNamespace = async () => {
+      throw new Error("D1 is down");
+    };
+    return token;
+  })();
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie, csrf });
+  assert.equal(redirectTarget(response).searchParams.get("err"), "failed");
+  assert.ok(ctx.errors.length >= 2);
+});
+
+test("an audit-log failure does not undo or hide the change that was made", async () => {
+  const ctx = await setup();
+  ctx.registry.appendAudit = async () => {
+    throw new Error("audit table gone");
+  };
+  const response = await post(ctx.hub, "/admin/ns", { namespace: "acme" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(response).searchParams.get("ok"), "site_created");
+  assert.ok(await ctx.registry.getNamespace("acme"));
+});
+
+test("unknown console paths are 404s, and a trailing slash is the dashboard", async () => {
+  const ctx = await setup();
+  for (const path of ["/admin/nope", "/admin/ns", "/admin/ns/acme/extra/deep", "/admin/admins/1", "/admin/auth/nope"]) {
+    assert.equal((await get(ctx.hub, path, ctx.cookie)).status, 404, path);
+  }
+  assert.equal((await get(ctx.hub, "/admin/", ctx.cookie)).status, 200);
+  const head = await ctx.hub.fetch(makeRequest(`${ORIGIN}/admin`, { method: "HEAD", cookie: ctx.cookie }));
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+});
+
+test("signing out clears the console cookie", async () => {
+  const ctx = await setup();
+  const response = await get(ctx.hub, "/admin/auth/logout", ctx.cookie);
+  assert.equal(response.status, 302);
+  assert.match(response.headers.get("Set-Cookie"), /hub_admin_session=;.*Max-Age=0/);
+});

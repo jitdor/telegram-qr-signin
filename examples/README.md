@@ -41,6 +41,7 @@ revocation list.
 | [`cloudflare-worker/`](cloudflare-worker/worker.js) | JS | The auth service itself — both halves in one Worker | Covered by the package's 150 tests |
 | [`node-server/`](node-server/server.mjs) | JS | The whole flow with no Cloudflare at all | — |
 | [`oidc-provider/`](oidc-provider/worker.js) | JS | A full OpenID Connect provider — see [docs/oidc.md](../docs/oidc.md) | Covered by 57 OIDC tests |
+| [`hub/`](hub/hub-worker.js) | JS | One bot for many sites, with an admin console — see [docs/hub.md](../docs/hub.md) | Covered by the hub tests (`tests/hub-*.test.mjs`) |
 | [`go/`](go/telegramqrauth.go) | Go | Verifier + middleware + CLI client | **`go test` — 13 subtests pass** |
 | [`python/`](python/telegram_qr_auth.py) | Python | Verifier + client | **`--selftest` — 9 checks pass** |
 | [`php/`](php/index.php) | PHP | Verifier + protected page | Reviewed, not executed (no PHP here) |

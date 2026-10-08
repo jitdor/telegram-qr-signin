@@ -1,5 +1,5 @@
 {
-  "name": "telegram-qr-auth-demo",
+  "name": "telegram-qr-signin-demo",
   "main": "worker.js",
   "compatibility_date": "2026-07-02",
 

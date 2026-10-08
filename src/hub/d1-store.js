@@ -70,7 +70,7 @@ export class D1HubStore {
     return row ? rowToNamespace(row) : null;
   }
 
-  /** One INSERT, origins included: there is no instant at which the site exists but is unbound. */
+  /** One INSERT, origins included: there is no instant at which the site exists without them. */
   async createNamespace({ namespace, name, origins, access = DEFAULT_ACCESS, createdBy = null }) {
     assertSiteNamespace(namespace);
     assertAccessMode(access);
@@ -412,13 +412,14 @@ function rowToNamespace(row) {
   };
 }
 
-/** Matches no real origin, so a site whose stored list cannot be read is refused rather than unbound. */
+/** Matches no real origin, so a site whose stored list cannot be read is refused, not opened to every URL. */
 const UNREADABLE = "(unreadable)";
 
 /**
- * The site's origins from the stored JSON. A list that is damaged is reported as one origin that
- * can never match — the site is shut, visibly, not silently opened to every URL as an empty list
- * (the "unbound" state) would. `forEdit` reads only the valid entries, so adding an origin repairs it.
+ * The site's origins from the stored JSON. The schema guarantees a non-empty list of origins, so
+ * anything else (damaged by hand, or written around the CHECK) is reported as one origin that can
+ * never match: the site is shut, visibly. `forEdit` reads only the valid entries, so adding an
+ * origin repairs it.
  */
 function parseOrigins(value, { forEdit = false } = {}) {
   let list;
@@ -429,7 +430,7 @@ function parseOrigins(value, { forEdit = false } = {}) {
   }
   if (!Array.isArray(list)) return forEdit ? [] : [UNREADABLE];
   const valid = list.filter((o) => typeof o === "string" && normalizeOrigin(o) === o);
-  return valid.length === 0 && list.length > 0 && !forEdit ? [UNREADABLE] : valid;
+  return valid.length === 0 && !forEdit ? [UNREADABLE] : valid;
 }
 
 function rowToRequest(row) {

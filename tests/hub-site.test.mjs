@@ -261,6 +261,7 @@ test("D1HubStore: one site's damaged origins do not stop every other site being 
   const store = new D1HubStore(db);
   await store.createNamespace({ namespace: "acme", name: "Acme", origins: [ACME] });
   await store.createNamespace({ namespace: "bad", name: "Bad", origins: ["https://bad.example"] });
+  db.sqlite.exec("PRAGMA ignore_check_constraints = ON");
   db.sqlite.exec(`UPDATE hub_namespaces SET origins = 'garbage' WHERE namespace = 'bad'`);
 
   assert.deepEqual(await store.namespacesForOrigin(ACME), ["acme"]);

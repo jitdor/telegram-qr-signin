@@ -16,11 +16,7 @@ export interface HubNamespace {
   name: string;
   enabled: boolean;
   access: HubAccessMode;
-  /**
-   * The origins (scheme + host + port) the site is served from. The namespace works only from these.
-   * Empty only for a site registered before binding existed: it is "unbound" and works from anywhere
-   * until an origin is added.
-   */
+  /** The origins (scheme + host + port) the site is served from, at least one. The site works only from these. */
   origins: string[];
   createdAt: number;
   createdBy: number | null;
@@ -81,7 +77,7 @@ export interface HubAccess {
   enabled: boolean;
   /** The site's access mode. */
   mode: HubAccessMode;
-  /** The site's registered origins; empty means unbound (legacy). */
+  /** The site's registered origins (empty only when `exists` is false). */
   origins: string[];
   granted: boolean;
   /** On the site's block list. Beats `granted`, and applies in every mode. */
@@ -108,7 +104,7 @@ export interface HubStore {
    * than 10, or a URL that belongs to another site (`OriginInUseError`).
    */
   addOrigin(namespace: string, url: string): Promise<boolean>;
-  /** True if removed; false if absent, or if it is the site's only origin (a site is never left unbound). */
+  /** True if removed; false if absent, or if it is the site's only origin (a site always keeps one). */
   removeOrigin(namespace: string, url: string): Promise<boolean>;
   /** Switches the site off first, then removes its grants, blocks and requests. */
   deleteNamespace(namespace: string): Promise<boolean>;

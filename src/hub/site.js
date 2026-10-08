@@ -8,7 +8,7 @@
 // from the URL each request arrives at, by looking that origin up in the registry. The id then comes
 // from the one thing a Worker cannot misreport — where it was actually reached — instead of from a
 // string in its code that has to be kept in step with the console. Pass `namespace` to pin it
-// instead (needed for a site registered before URLs were bound, which has no origin to look up).
+// instead, which skips that lookup.
 
 import { createTelegramQrAuth, jsonResponse } from "../provider.js";
 import { every } from "../gates.js";
@@ -35,8 +35,9 @@ const TEMPLATE_NAMESPACE = "site";
  * @param {object} config.registry   A HubStore (D1HubStore on Workers).
  * @param {string} [config.namespace]  The id this site was registered under. Leave it out and the
  *   site resolves it from the request's origin on every request (one extra registry query), which
- *   is what you want unless the site predates URL binding. The site's URL must then be registered
- *   in the console, and to exactly one site.
+ *   is what you want. Pass it to pin the site and skip that query; the request's origin must still
+ *   be one of that namespace's registered URLs. Either way the URL is registered in the console,
+ *   to exactly one site.
  * @param {object} config.session    `{ secret }` is required: unlike a standalone app there is no
  *   bot token to default to. Give each site its own, so one site's cookies are worthless on another.
  * @param {Function} [config.authorize]  Optional extra gate, ANDed with the hub's — e.g. also

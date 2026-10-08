@@ -25,10 +25,10 @@ CREATE TABLE IF NOT EXISTS hub_namespaces (
   -- switching back restores them.
   access TEXT NOT NULL DEFAULT 'granted' CHECK (access IN ('granted', 'anyone')),
   -- The URLs the site is served from, as a JSON array of origins: '["https://docs.example.com"]'.
-  -- A request from any other origin is refused, and so is a scan of a QR minted anywhere else, so a
-  -- namespace cannot be used from a site it was not registered for. '[]' means unbound: only rows
-  -- created before binding existed, since the store refuses to create a site without one.
-  origins TEXT NOT NULL DEFAULT '[]',
+  -- A site finds its own namespace by looking its origin up here, a request from any other origin is
+  -- refused, and so is a scan of a QR minted anywhere else. There must always be at least one: the
+  -- database refuses a site without, so a site that anything could use is not a state that exists.
+  origins TEXT NOT NULL CHECK (json_valid(origins) AND json_array_length(origins) >= 1),
   created_at INTEGER NOT NULL,
   created_by INTEGER
 );

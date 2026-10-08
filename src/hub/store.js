@@ -78,8 +78,7 @@ export class MemoryHubStore {
 
   /**
    * `origins` is required: a site is born bound to the URL(s) it is served from, so there is no
-   * moment at which a namespace exists but any Worker can use it. (Rows from before binding existed
-   * have none and keep working unbound until an admin adds one — see the upgrade script.)
+   * moment at which a namespace exists but any Worker can use it.
    */
   async createNamespace({ namespace, name, origins, access = DEFAULT_ACCESS, createdBy = null }) {
     assertSiteNamespace(namespace);
@@ -143,7 +142,7 @@ export class MemoryHubStore {
 
   /**
    * Removes a URL. True if removed; false if it was not there, or it is the site's only one — a
-   * site is never left unbound by removing origins, only by being legacy.
+   * site is never left without one.
    */
   async removeOrigin(namespace, url) {
     const origin = normalizeOrigin(url);

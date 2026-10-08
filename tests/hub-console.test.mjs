@@ -810,22 +810,6 @@ test("removing a URL works until it is the last one, and is audited", async () =
   assert.doesNotMatch(page, /name="origin" value="https:\/\/acme\.example"/);
 });
 
-test("a legacy site with no URL is flagged everywhere until it is bound", async () => {
-  const ctx = await setup();
-  await post(ctx.hub, "/admin/ns", { namespace: "old", name: "Old site", url: "https://old.example" }, { cookie: ctx.cookie });
-  ctx.registry.namespaces.get("old").origins = []; // as left by the upgrade script
-
-  const dash = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
-  assert.match(dash, /Not bound to a URL/);
-  const page = await (await get(ctx.hub, "/admin/ns/old", ctx.cookie)).text();
-  assert.match(page, /<h2>Not bound to a URL<\/h2>/);
-  assert.match(page, /any Worker with the hub's shared bindings/);
-
-  await post(ctx.hub, "/admin/ns/old/origins", { url: "https://old.example" }, { cookie: ctx.cookie });
-  assert.doesNotMatch(await (await get(ctx.hub, "/admin/ns/old", ctx.cookie)).text(), /<h2>Not bound to a URL<\/h2>/);
-  assert.doesNotMatch(await (await get(ctx.hub, "/admin", ctx.cookie)).text(), /Not bound to a URL/);
-});
-
 test("URL changes are protected by the same CSRF and origin checks as everything else", async () => {
   const ctx = await setup();
   await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme", url: "https://acme.example" }, { cookie: ctx.cookie });

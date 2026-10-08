@@ -162,7 +162,7 @@ export function createHub(config) {
     // registered — is turned away before it can spend anything, and says why. A QR that is already
     // gone falls through to the usual "expired" reply. (This relies on the site recording its origin
     // honestly; it stops a mistake, not a hostile Worker that holds the shared bindings.)
-    if (record && site.origins.length && !site.origins.includes(record.client?.origin ?? "")) {
+    if (record && !site.origins.includes(record.client?.origin ?? "")) {
       await reply(message, `That sign-in code came from a site that isn't registered for ${cleanName(site.name) || site.namespace}. Open the real site and scan the code it shows.`);
       return true;
     }

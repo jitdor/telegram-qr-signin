@@ -373,67 +373,33 @@ test("D1HubStore honours a custom prefix", async () => {
   assert.equal((await store.access("acme", 2)).blocked, true);
 });
 
-// The hub schema as first released: no `access` column, no hub_blocks table.
-const SCHEMA_BEFORE_OPEN_ACCESS = `
-  CREATE TABLE hub_namespaces (namespace TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, created_by INTEGER);
-  CREATE TABLE hub_admins (telegram_id INTEGER PRIMARY KEY, label TEXT NOT NULL DEFAULT '', added_by INTEGER, added_at INTEGER NOT NULL);
-  CREATE TABLE hub_grants (namespace TEXT NOT NULL, telegram_id INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '', added_by INTEGER, added_at INTEGER NOT NULL, PRIMARY KEY (namespace, telegram_id));
-  CREATE TABLE hub_requests (namespace TEXT NOT NULL, telegram_id INTEGER NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (namespace, telegram_id));
-  CREATE TABLE hub_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor INTEGER, action TEXT NOT NULL, target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
-`;
-
-test("the upgrade script brings a database from before open access up to date without changing anyone's access", async () => {
-  const { readFileSync } = await import("node:fs");
-  const upgradeAccess = readFileSync(new URL("../migrations/hub-d1-upgrade-access.sql", import.meta.url), "utf8");
-  const upgradeOrigins = readFileSync(new URL("../migrations/hub-d1-upgrade-origins.sql", import.meta.url), "utf8");
-
-  const db = makeFakeD1({ schema: SCHEMA_BEFORE_OPEN_ACCESS });
-  db.sqlite.exec(`INSERT INTO hub_namespaces VALUES ('acme', 'Acme', 1, 100, 1);
-                  INSERT INTO hub_namespaces VALUES ('off', 'Off', 0, 100, 1);
-                  INSERT INTO hub_grants VALUES ('acme', 111, 'Alice', 1, 100);`);
-
-  db.sqlite.exec(upgradeAccess);
-  db.sqlite.exec(upgradeOrigins);
-  const store = new D1HubStore(db);
-
-  assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", origins: [], granted: true, blocked: false });
-  assert.deepEqual(await store.access("acme", 222), { exists: true, enabled: true, mode: "granted", origins: [], granted: false, blocked: false });
-  assert.equal((await store.getNamespace("off")).enabled, false, "a switched-off site stays off");
-  assert.deepEqual((await store.listNamespaces()).map((s) => [s.namespace, s.access, s.users]), [["acme", "granted", 1], ["off", "granted", 0]]);
-
-  // The new features work on the upgraded database.
-  await store.updateNamespace("acme", { access: "anyone" });
-  await store.addBlock({ namespace: "acme", id: 9 });
-  assert.deepEqual([(await store.access("acme", 9)).mode, (await store.access("acme", 9)).blocked], ["anyone", true]);
-
-  // A legacy site is unbound until someone binds it, and then it cannot be unbound again.
-  assert.equal(await store.addOrigin("acme", "https://acme.example/some/path"), true);
-  assert.deepEqual((await store.access("acme", 111)).origins, ["https://acme.example"]);
-  assert.equal(await store.removeOrigin("acme", "https://acme.example"), false, "the last origin stays");
-
-  assert.throws(() => db.sqlite.exec(upgradeAccess), /duplicate column/, "a second run fails loudly instead of half-applying");
-  assert.throws(() => db.sqlite.exec(upgradeOrigins), /duplicate column/);
+test("the database refuses a site with no usable origins, so an unbound site cannot exist", () => {
+  const db = makeFakeD1({ sql: "hub-d1.sql" });
+  const insert = (origins) => db.sqlite.exec(`INSERT INTO hub_namespaces (namespace, name, origins, created_at) VALUES ('x', 'x', ${origins}, 1)`);
+  for (const bad of ["'[]'", "'garbage'", "'{}'", "'null'", "'\"https://a.example\"'", "''"]) {
+    assert.throws(() => insert(bad), /CHECK/, bad);
+  }
+  assert.throws(() => db.sqlite.exec("INSERT INTO hub_namespaces (namespace, name, created_at) VALUES ('y', 'y', 1)"), /NOT NULL/, "there is no default: an insert must say where the site lives");
+  insert(`'["https://a.example"]'`);
+  assert.throws(() => db.sqlite.exec("UPDATE hub_namespaces SET origins = '[]' WHERE namespace = 'x'"), /CHECK/, "nor can the last origin be edited away underneath the store");
 });
 
 test("the database refuses an access value the code never writes", () => {
   const db = makeFakeD1({ sql: "hub-d1.sql" });
-  assert.throws(() => db.sqlite.exec("INSERT INTO hub_namespaces (namespace, name, access, created_at) VALUES ('x', 'x', 'public', 1)"), /CHECK/);
+  assert.throws(() => db.sqlite.exec(`INSERT INTO hub_namespaces (namespace, name, access, origins, created_at) VALUES ('x', 'x', 'public', '["https://x.example"]', 1)`), /CHECK/);
 });
 
-test("D1HubStore: a damaged origins value shuts the site instead of unbinding it, and adding an origin repairs it", async () => {
+test("D1HubStore: a site whose origins were damaged behind the schema's back is shut, and adding an origin repairs it", async () => {
   const db = makeFakeD1({ sql: "hub-d1.sql" });
   const store = new D1HubStore(db);
   await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+  db.sqlite.exec("PRAGMA ignore_check_constraints = ON"); // what hand-editing the database could do
 
-  for (const damaged of ["garbage", "{}", '["not an origin"]', '[1, 2]', "null"]) {
+  for (const damaged of ["garbage", "{}", '["not an origin"]', "[1, 2]", "null", "[]"]) {
     db.sqlite.exec(`UPDATE hub_namespaces SET origins = '${damaged.replace(/'/g, "''")}' WHERE namespace = 'acme'`);
-    const origins = (await store.access("acme", 1)).origins;
-    assert.deepEqual(origins, ["(unreadable)"], damaged);
+    assert.deepEqual((await store.access("acme", 1)).origins, ["(unreadable)"], damaged);
     assert.deepEqual((await store.getNamespace("acme")).origins, ["(unreadable)"], damaged);
   }
-  // An empty list is the legitimate legacy state, and stays that.
-  db.sqlite.exec("UPDATE hub_namespaces SET origins = '[]' WHERE namespace = 'acme'");
-  assert.deepEqual((await store.access("acme", 1)).origins, []);
 
   db.sqlite.exec("UPDATE hub_namespaces SET origins = 'garbage' WHERE namespace = 'acme'");
   assert.equal(await store.addOrigin("acme", "https://acme.example"), true);

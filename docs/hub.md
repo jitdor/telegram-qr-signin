@@ -63,17 +63,6 @@ wrangler kv namespace create LOGINS
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<hub>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 ```
 
-Already running an earlier version of the hub? Apply the upgrade scripts you have not yet run, each
-**once**, in this order:
-
-| Script | Adds | Effect on existing sites |
-| --- | --- | --- |
-| `hub-d1-upgrade-access.sql` | open sites and block lists | None: every site stays approved-people-only |
-| `hub-d1-upgrade-origins.sql` | binding a site to its URL | None yet: existing sites are *unbound* and keep working from anywhere. The console flags each one; open it and add its URL, and the namespace is bound from then on |
-
-A second run of either fails loudly and changes nothing. `createNamespace()` now requires `origins`,
-so code that seeds sites programmatically needs the URL added.
-
 **2. Open `https://<hub>/admin`** and scan the QR with a Telegram account whose numeric id is in
 `superAdmins`. Add a site: enter its display name and URL (`Internal docs`, `https://docs.example.com`), and the
 console proposes an id (`internal-docs`) that you can edit before saving. Grant people access.
@@ -102,8 +91,7 @@ The site does not say which site it is. On each request it looks up the URL it w
 registry and acts as the site that URL is registered to, so there is no id to copy into the code and
 nothing to drift out of step with the console. At a URL that is not registered it refuses everything:
 no QR, no login page, no session. (Costs one extra registry query per request. Pass `namespace` to
-pin the site instead and skip it — you need to for a legacy site that has no URL yet. Everything
-here works the same either way.)
+pin the site instead and skip it. Everything here works the same either way.)
 
 Both bindings (`LOGINS`, `HUB_DB`) point at the hub's resources — copy the ids into the site's
 `wrangler.jsonc` ([`site-wrangler.jsonc`](../examples/hub/site-wrangler.jsonc)). Everything else
@@ -208,10 +196,6 @@ holds the shared login store and registry, so a *malicious* Worker with those bi
 whatever origin it liked. Binding stops mistakes — staging on production's namespace, a copy deployed
 to the wrong place, a site nobody registered — and makes each one visible; it is not a defence against
 a hostile site you have already given the shared bindings. Keep those bindings to Workers you trust.
-
-Sites registered before binding existed are **unbound** (no origins) and keep working from anywhere,
-so upgrading locks nobody out. The console flags each one on the dashboard and its page: open it and
-add its URL. Unbound is never a state a new site can be in.
 
 ## Open sites
 

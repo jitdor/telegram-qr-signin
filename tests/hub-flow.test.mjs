@@ -400,20 +400,6 @@ test("binding applies to an open site too: the whole world still cannot use it f
   assert.equal((await forum.authorize({ id: BOB.id }, { request: makeRequest(`${STAGING}/`), stage: "session" })).reason, "origin_not_allowed");
 });
 
-test("a legacy site with no origins keeps working from anywhere until it is bound, then stops", async () => {
-  const ctx = await setup();
-  ctx.registry.namespaces.get("acme").origins = []; // as left by the upgrade script
-  const { token } = await login(ctx.acme, STAGING);
-  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
-  assert.equal((await ctx.store.get(token, "acme")).status, "confirmed", "unbound: nothing is checked");
-  assert.equal((await ctx.acme.guard(makeRequest("https://anywhere.example/", { cookie: (await signInToSite(ctx, ctx.acme, ALICE)).cookie }))).ok, true);
-
-  await ctx.registry.addOrigin("acme", "https://acme.example");
-  const again = await login(ctx.acme, STAGING);
-  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${again.token}`, ALICE)));
-  assert.equal((await ctx.store.get(again.token, "acme")).status, "pending", "bound now: the same scan is refused");
-});
-
 test("the origin check needs a request: the gate at the scan itself defers to the hub's check", async () => {
   const ctx = await setup();
   assert.equal(await ctx.acme.authorize({ id: ALICE.id }, { stage: "confirm" }), true);

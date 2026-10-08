@@ -50,9 +50,8 @@ export function hubGate({ registry, namespace, recordRequests = true, onError = 
     // any other origin — a staging copy that borrowed production's namespace, say — gets nothing
     // from this registry: no grants, no open-site access. Checked wherever a request is in hand
     // (the browser's poll and every guarded request). The bot's scan has no request; the hub checks
-    // where that QR was minted instead (see hub.js). A site with no origins is a legacy row that
-    // predates binding, and is left alone until an admin binds it.
-    if (state.origins.length && ctx?.request) {
+    // where that QR was minted instead (see hub.js). Every site has at least one origin.
+    if (ctx?.request) {
       const origin = originOfRequest(ctx.request);
       if (!origin || !state.origins.includes(origin)) return { ok: false, reason: "origin_not_allowed" };
     }

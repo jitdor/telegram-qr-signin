@@ -218,11 +218,7 @@ ${flash(ctx.url)}
     <tbody>${sites
       .map(
         (s) => `<tr>
-      <td><a href="${adminPath}/ns/${esc(s.namespace)}">${esc(s.name)}</a><br>${
-        s.origins.length
-          ? `<span class="muted small">${esc(s.origins[0])}${s.origins.length > 1 ? ` +${s.origins.length - 1}` : ""}</span>`
-          : '<span class="pill warn" title="Any Worker with the shared bindings can use this namespace">Not bound to a URL</span>'
-      }</td>
+      <td><a href="${adminPath}/ns/${esc(s.namespace)}">${esc(s.name)}</a><br><span class="muted small">${esc(s.origins[0])}${s.origins.length > 1 ? ` +${s.origins.length - 1}` : ""}</span></td>
       <td><code>${esc(s.namespace)}</code></td>
       <td>${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}</td>
       <td class="num">${s.access === "anyone" ? '<span class="pill warn">Anyone</span>' : s.users}</td>
@@ -302,21 +298,10 @@ ${flash(ctx.url)}
     <p class="hint">Switching a site off locks everyone out of it on their next request. Their access is kept for when you switch it back on.</p>`)}
 </section>
 
-${
-  site.origins.length
-    ? ""
-    : `<section class="warn-zone">
-  <h2>Not bound to a URL</h2>
-  <p class="lead">This site was registered before sites were bound to URLs, so any Worker with the hub's shared bindings can use this id, and a site cannot find it from its URL. Add the URL it is served from, below, to close that.</p>
-</section>`
-}
-
 <section>
   <h2>Site URLs <span class="count">${site.origins.length}</span></h2>
   <p class="lead">The site finds its own id from the address it is reached at, so each URL can belong to only one site, and a visitor reaching the site at any other address is refused, as is a QR code shown anywhere else. Use the address as it appears in the browser, for example both your custom domain and its <code>workers.dev</code> address if people can reach either.</p>
-  ${
-    site.origins.length
-      ? `<div class="table-wrap"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>Origin</th><th></th></tr></thead>
     <tbody>${site.origins
       .map(
@@ -329,9 +314,7 @@ ${
       }</td>
     </tr>`
       )
-      .join("")}</tbody></table></div>`
-      : ""
-  }
+      .join("")}</tbody></table></div>
   ${postForm(ctx, `${base}/origins`, `
     <div class="row">
       <label class="grow">Add a URL<input name="url" required maxlength="200" placeholder="https://acme.example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>

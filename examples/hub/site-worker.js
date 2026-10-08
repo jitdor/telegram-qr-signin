@@ -2,7 +2,8 @@
 // token, no webhook, no group id — the hub owns the bot, and who may enter is whoever the hub's
 // console has granted access to this site's namespace.
 //
-// Register the namespace in the console first (https://<hub>/admin → Add site → "docs").
+// Register the namespace in the console first (https://<hub>/admin → Add site → "docs", with the URL
+// this Worker is served from — the namespace works only from there).
 //
 // Setup:
 //   wrangler secret put SESSION_SECRET      # this site's own; never shared with another site

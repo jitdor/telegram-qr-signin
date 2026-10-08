@@ -18,8 +18,8 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("creating a site is idempotent and never overwrites", async (make) => {
     const store = make();
-    assert.equal(await store.createNamespace({ namespace: "acme", name: "Acme", createdBy: 1 }), true);
-    assert.equal(await store.createNamespace({ namespace: "acme", name: "Other", createdBy: 2 }), false);
+    assert.equal(await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme", createdBy: 1 }), true);
+    assert.equal(await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Other", createdBy: 2 }), false);
     const site = await store.getNamespace("acme");
     assert.equal(site.name, "Acme");
     assert.equal(site.enabled, true);
@@ -29,7 +29,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("a blank name falls back to the namespace", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "   " });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "   " });
     assert.equal((await store.getNamespace("acme")).name, "acme");
     await store.updateNamespace("acme", { name: "Acme" });
     await store.updateNamespace("acme", { name: "" });
@@ -45,7 +45,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("update changes only what it is given, and reports a missing site", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     assert.equal(await store.updateNamespace("acme", { enabled: false }), true);
     assert.deepEqual(
       (({ name, enabled }) => ({ name, enabled }))(await store.getNamespace("acme")),
@@ -61,24 +61,24 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("access reports unknown, disabled, granted and not granted apart", async (make) => {
     const store = make();
-    assert.deepEqual(await store.access("acme", 111), { exists: false, enabled: false, mode: "granted", granted: false, blocked: false });
+    assert.deepEqual(await store.access("acme", 111), { exists: false, enabled: false, mode: "granted", origins: [], granted: false, blocked: false });
 
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
-    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", granted: false, blocked: false });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
+    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", origins: ["https://acme.example"], granted: false, blocked: false });
 
     await store.addGrant({ namespace: "acme", id: 111 });
-    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", granted: true, blocked: false });
+    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", origins: ["https://acme.example"], granted: true, blocked: false });
     assert.equal((await store.access("acme", 222)).granted, false);
     assert.equal((await store.access("other", 111)).granted, false, "a grant is per site");
 
     await store.updateNamespace("acme", { enabled: false });
-    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: false, mode: "granted", granted: true, blocked: false });
+    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: false, mode: "granted", origins: ["https://acme.example"], granted: true, blocked: false });
   });
 
   t("a site starts as approved-people-only, can be created open, and switches both ways", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
-    await store.createNamespace({ namespace: "forum", name: "Forum", access: "anyone" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
+    await store.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "Forum", access: "anyone" });
     assert.equal((await store.getNamespace("acme")).access, "granted");
     assert.equal((await store.getNamespace("forum")).access, "anyone");
 
@@ -91,18 +91,18 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("an access mode that does not exist is refused, and refusing it changes nothing", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     for (const bad of ["open", "ANYONE", "", null, 1, {}]) {
       await assert.rejects(store.updateNamespace("acme", { access: bad }), /access must be/, String(bad));
     }
-    await assert.rejects(store.createNamespace({ namespace: "x", name: "x", access: "public" }), /access must be/);
+    await assert.rejects(store.createNamespace({ namespace: "x", origins: ["https://x.example"], name: "x", access: "public" }), /access must be/);
     assert.equal((await store.getNamespace("acme")).access, "granted");
     assert.equal(await store.getNamespace("x"), null);
   });
 
   t("switching access leaves the grants alone, so switching back restores them", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     await store.addGrant({ namespace: "acme", id: 111 });
     await store.updateNamespace("acme", { access: "anyone" });
     assert.equal((await store.access("acme", 111)).granted, true, "the grant is still there while the site is open");
@@ -113,8 +113,8 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("blocks add once, remove once, list newest first, and apply per site", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
-    await store.createNamespace({ namespace: "forum", name: "Forum", access: "anyone" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
+    await store.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "Forum", access: "anyone" });
     assert.equal(await store.addBlock({ namespace: "forum", id: 9, label: "spam", addedBy: 1 }), true);
     assert.equal(await store.addBlock({ namespace: "forum", id: 9, label: "again" }), false);
     await store.addBlock({ namespace: "forum", id: 8 });
@@ -137,7 +137,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("a block and a grant can coexist; the block is reported alongside, not instead", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     await store.addGrant({ namespace: "acme", id: 5 });
     await store.addBlock({ namespace: "acme", id: 5 });
     const state = await store.access("acme", 5);
@@ -155,7 +155,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
   t("ids beyond 32 bits survive a round trip", async (make) => {
     const store = make();
     const big = 7_123_456_789_012;
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     await store.addGrant({ namespace: "acme", id: big, label: "big" });
     assert.equal((await store.access("acme", big)).granted, true);
     assert.equal((await store.listGrants("acme"))[0].id, big);
@@ -165,7 +165,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("grants add once, remove once, and list newest first", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     assert.equal(await store.addGrant({ namespace: "acme", id: 1, label: "first", addedBy: 9 }), true);
     assert.equal(await store.addGrant({ namespace: "acme", id: 1, label: "changed" }), false);
     await store.addGrant({ namespace: "acme", id: 2 });
@@ -184,7 +184,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("labels are cleaned of control characters and capped", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
     await store.addGrant({ namespace: "acme", id: 5, label: `a\n\tb${"x".repeat(200)}` });
     const [grant] = await store.listGrants("acme");
     assert.ok(grant.label.startsWith("a b"));
@@ -193,8 +193,8 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("deleting a site takes its grants and requests with it, and a re-created site starts empty", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme" });
-    await store.createNamespace({ namespace: "keep", name: "Keep" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
+    await store.createNamespace({ namespace: "keep", origins: ["https://keep.example"], name: "Keep" });
     await store.addGrant({ namespace: "acme", id: 1 });
     await store.addGrant({ namespace: "keep", id: 1 });
     await store.addBlock({ namespace: "acme", id: 3 });
@@ -205,7 +205,7 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
     assert.equal(await store.deleteNamespace("acme"), false);
     assert.equal(await store.getNamespace("acme"), null);
 
-    await store.createNamespace({ namespace: "acme", name: "Acme again" });
+    await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme again" });
     assert.deepEqual(await store.listGrants("acme"), []);
     assert.deepEqual(await store.listBlocks("acme"), [], "a re-registered site does not inherit the old ban list");
     assert.deepEqual(await store.listRequests("acme"), []);
@@ -215,8 +215,8 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("listing sites reports user and request counts, ordered by name", async (make) => {
     const store = make();
-    await store.createNamespace({ namespace: "b-site", name: "bravo" });
-    await store.createNamespace({ namespace: "a-site", name: "Alpha" });
+    await store.createNamespace({ namespace: "b-site", origins: ["https://b-site.example"], name: "bravo" });
+    await store.createNamespace({ namespace: "a-site", origins: ["https://a-site.example"], name: "Alpha" });
     await store.addGrant({ namespace: "a-site", id: 1 });
     await store.addGrant({ namespace: "a-site", id: 2 });
     await store.recordRequest({ namespace: "a-site", user: { id: 3 } });
@@ -272,6 +272,84 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
     assert.deepEqual({ actor: log[0].actor, target: log[0].target, detail: log[0].detail }, { actor: 1, target: "t", detail: "d5" });
     assert.equal((await store.listAudit({ limit: 1 })).length, 1);
   });
+
+  t("a site cannot be created without a valid origin, and nothing is created when it is refused", async (make) => {
+    const store = make();
+    for (const origins of [undefined, null, [], "https://acme.example", [""], ["acme.example"], ["http://acme.example"], ["ftp://acme.example"], ["javascript:alert(1)"], ["https://u:p@acme.example"], ["https://ok.example", "nope"], [null], Array.from({ length: 11 }, (_, n) => `https://s${n}.example`)]) {
+      await assert.rejects(store.createNamespace({ namespace: "acme", name: "Acme", origins }), /origin/, JSON.stringify(origins));
+    }
+    assert.equal(await store.getNamespace("acme"), null);
+  });
+
+  t("origins are normalised to scheme + host + port, de-duplicated, and localhost may use http", async (make) => {
+    const store = make();
+    await store.createNamespace({
+      namespace: "acme",
+      name: "Acme",
+      origins: ["https://Acme.Example.com:443/login?x=1", "https://acme.example.com", " https://acme.example.com:8443/ ", "http://localhost:8787/app", "http://127.0.0.1:3000"],
+    });
+    assert.deepEqual((await store.getNamespace("acme")).origins, [
+      "https://acme.example.com",
+      "https://acme.example.com:8443",
+      "http://localhost:8787",
+      "http://127.0.0.1:3000",
+    ]);
+    assert.deepEqual((await store.access("acme", 1)).origins, (await store.getNamespace("acme")).origins);
+    assert.deepEqual((await store.listNamespaces())[0].origins, (await store.getNamespace("acme")).origins);
+  });
+
+  t("origins can be added and removed, never duplicated, and a site never loses its last one", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+    assert.equal(await store.addOrigin("acme", "https://acme.workers.dev/some/path"), true);
+    assert.equal(await store.addOrigin("acme", "HTTPS://ACME.workers.dev"), false, "the same origin, however it is written");
+    assert.deepEqual((await store.getNamespace("acme")).origins, ["https://acme.example", "https://acme.workers.dev"]);
+
+    assert.equal(await store.removeOrigin("acme", "https://nope.example"), false);
+    assert.equal(await store.removeOrigin("acme", "not a url"), false);
+    assert.equal(await store.removeOrigin("acme", "https://acme.workers.dev/ignored-path"), true);
+    assert.equal(await store.removeOrigin("acme", "https://acme.example"), false, "the last origin stays");
+    assert.deepEqual((await store.getNamespace("acme")).origins, ["https://acme.example"]);
+
+    assert.equal(await store.addOrigin("ghost", "https://ghost.example"), false, "a site that does not exist cannot be given origins");
+    assert.equal(await store.getNamespace("ghost"), null);
+    assert.equal(await store.removeOrigin("ghost", "https://ghost.example"), false);
+  });
+
+  t("adding an invalid origin throws, and so does going past the limit", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+    for (const bad of ["acme.example", "http://acme.example", "ftp://x.example", "", null, "https://u:p@x.example"]) {
+      await assert.rejects(store.addOrigin("acme", bad), /origin must be/, String(bad));
+    }
+    for (let n = 1; n < 10; n++) await store.addOrigin("acme", `https://s${n}.example`);
+    await assert.rejects(store.addOrigin("acme", "https://one-too-many.example"), /at most 10/);
+    assert.equal((await store.getNamespace("acme")).origins.length, 10);
+  });
+
+  t("edits made at the same moment are not lost", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+    const added = await Promise.all(["a", "b", "c", "d", "e"].map((n) => store.addOrigin("acme", `https://${n}.example`)));
+    assert.deepEqual(added, [true, true, true, true, true]);
+    assert.deepEqual((await store.getNamespace("acme")).origins.sort(), ["https://a.example", "https://acme.example", "https://b.example", "https://c.example", "https://d.example", "https://e.example"]);
+  });
+
+  t("renaming, switching off and changing the mode leave the origins alone", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+    await store.updateNamespace("acme", { name: "New", enabled: false, access: "anyone" });
+    assert.deepEqual((await store.getNamespace("acme")).origins, ["https://acme.example"]);
+  });
+
+  t("a returned origins list is a copy: changing it does not change the site", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+    (await store.getNamespace("acme")).origins.push("https://evil.example");
+    (await store.access("acme", 1)).origins.push("https://evil.example");
+    (await store.listNamespaces())[0].origins.push("https://evil.example");
+    assert.deepEqual((await store.getNamespace("acme")).origins, ["https://acme.example"]);
+  });
 }
 
 test("D1HubStore refuses a table prefix that is not a plain identifier", () => {
@@ -288,7 +366,7 @@ test("D1HubStore honours a custom prefix", async () => {
                   ALTER TABLE hub_admins RENAME TO site_admins;
                   ALTER TABLE hub_audit RENAME TO site_audit;`);
   const store = new D1HubStore(db, { prefix: "site_" });
-  await store.createNamespace({ namespace: "acme", name: "Acme" });
+  await store.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme" });
   await store.addGrant({ namespace: "acme", id: 1 });
   await store.addBlock({ namespace: "acme", id: 2 });
   assert.equal((await store.access("acme", 1)).granted, true);
@@ -306,18 +384,20 @@ const SCHEMA_BEFORE_OPEN_ACCESS = `
 
 test("the upgrade script brings a database from before open access up to date without changing anyone's access", async () => {
   const { readFileSync } = await import("node:fs");
-  const upgrade = readFileSync(new URL("../migrations/hub-d1-upgrade-access.sql", import.meta.url), "utf8");
+  const upgradeAccess = readFileSync(new URL("../migrations/hub-d1-upgrade-access.sql", import.meta.url), "utf8");
+  const upgradeOrigins = readFileSync(new URL("../migrations/hub-d1-upgrade-origins.sql", import.meta.url), "utf8");
 
   const db = makeFakeD1({ schema: SCHEMA_BEFORE_OPEN_ACCESS });
   db.sqlite.exec(`INSERT INTO hub_namespaces VALUES ('acme', 'Acme', 1, 100, 1);
                   INSERT INTO hub_namespaces VALUES ('off', 'Off', 0, 100, 1);
                   INSERT INTO hub_grants VALUES ('acme', 111, 'Alice', 1, 100);`);
 
-  db.sqlite.exec(upgrade);
+  db.sqlite.exec(upgradeAccess);
+  db.sqlite.exec(upgradeOrigins);
   const store = new D1HubStore(db);
 
-  assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", granted: true, blocked: false });
-  assert.deepEqual(await store.access("acme", 222), { exists: true, enabled: true, mode: "granted", granted: false, blocked: false });
+  assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", origins: [], granted: true, blocked: false });
+  assert.deepEqual(await store.access("acme", 222), { exists: true, enabled: true, mode: "granted", origins: [], granted: false, blocked: false });
   assert.equal((await store.getNamespace("off")).enabled, false, "a switched-off site stays off");
   assert.deepEqual((await store.listNamespaces()).map((s) => [s.namespace, s.access, s.users]), [["acme", "granted", 1], ["off", "granted", 0]]);
 
@@ -326,10 +406,56 @@ test("the upgrade script brings a database from before open access up to date wi
   await store.addBlock({ namespace: "acme", id: 9 });
   assert.deepEqual([(await store.access("acme", 9)).mode, (await store.access("acme", 9)).blocked], ["anyone", true]);
 
-  assert.throws(() => db.sqlite.exec(upgrade), /duplicate column/, "a second run fails loudly instead of half-applying");
+  // A legacy site is unbound until someone binds it, and then it cannot be unbound again.
+  assert.equal(await store.addOrigin("acme", "https://acme.example/some/path"), true);
+  assert.deepEqual((await store.access("acme", 111)).origins, ["https://acme.example"]);
+  assert.equal(await store.removeOrigin("acme", "https://acme.example"), false, "the last origin stays");
+
+  assert.throws(() => db.sqlite.exec(upgradeAccess), /duplicate column/, "a second run fails loudly instead of half-applying");
+  assert.throws(() => db.sqlite.exec(upgradeOrigins), /duplicate column/);
 });
 
 test("the database refuses an access value the code never writes", () => {
   const db = makeFakeD1({ sql: "hub-d1.sql" });
   assert.throws(() => db.sqlite.exec("INSERT INTO hub_namespaces (namespace, name, access, created_at) VALUES ('x', 'x', 'public', 1)"), /CHECK/);
+});
+
+test("D1HubStore: a damaged origins value shuts the site instead of unbinding it, and adding an origin repairs it", async () => {
+  const db = makeFakeD1({ sql: "hub-d1.sql" });
+  const store = new D1HubStore(db);
+  await store.createNamespace({ namespace: "acme", name: "Acme", origins: ["https://acme.example"] });
+
+  for (const damaged of ["garbage", "{}", '["not an origin"]', '[1, 2]', "null"]) {
+    db.sqlite.exec(`UPDATE hub_namespaces SET origins = '${damaged.replace(/'/g, "''")}' WHERE namespace = 'acme'`);
+    const origins = (await store.access("acme", 1)).origins;
+    assert.deepEqual(origins, ["(unreadable)"], damaged);
+    assert.deepEqual((await store.getNamespace("acme")).origins, ["(unreadable)"], damaged);
+  }
+  // An empty list is the legitimate legacy state, and stays that.
+  db.sqlite.exec("UPDATE hub_namespaces SET origins = '[]' WHERE namespace = 'acme'");
+  assert.deepEqual((await store.access("acme", 1)).origins, []);
+
+  db.sqlite.exec("UPDATE hub_namespaces SET origins = 'garbage' WHERE namespace = 'acme'");
+  assert.equal(await store.addOrigin("acme", "https://acme.example"), true);
+  assert.deepEqual((await store.getNamespace("acme")).origins, ["https://acme.example"]);
+});
+
+test("D1HubStore: deleting a site switches it off first, so an interrupted delete cannot leave it open", async () => {
+  const db = makeFakeD1({ sql: "hub-d1.sql" });
+  const store = new D1HubStore(db);
+  await store.createNamespace({ namespace: "forum", name: "Forum", origins: ["https://forum.example"], access: "anyone" });
+  await store.addGrant({ namespace: "forum", id: 1 });
+
+  // Make the cleanup fail partway, the way a dropped connection would.
+  const real = db.prepare.bind(db);
+  db.prepare = (query) => {
+    if (/DELETE FROM hub_requests/.test(query)) throw new Error("connection lost");
+    return real(query);
+  };
+  await assert.rejects(store.deleteNamespace("forum"), /connection lost/);
+  db.prepare = real;
+
+  const state = await store.access("forum", 999);
+  assert.equal(state.exists, true, "the site is still there, half removed");
+  assert.equal(state.enabled, false, "but it is off, so nobody can use it");
 });

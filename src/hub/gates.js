@@ -2,6 +2,7 @@
 // they compose with `every` / `some` and with the built-in chatMember, allowlist and friends.
 
 import { parseIdList } from "../gates.js";
+import { originOfRequest } from "./validate.js";
 
 /**
  * Who may sign in to the site registered as `namespace`. In the default "granted" mode that is
@@ -13,6 +14,7 @@ import { parseIdList } from "../gates.js";
  * Refusal reasons, so a custom login page or log can tell them apart:
  *   "unknown_namespace"  the site is not registered (deleted, or never added)
  *   "namespace_disabled" the site is switched off in the console
+ *   "origin_not_allowed" the request came to a URL this namespace is not registered for
  *   "blocked"            this person is on the site's block list
  *   "not_granted"        the site needs a grant, and this person has none
  *   "hub_unavailable"    the registry could not be read (transient: retry, do not sign anyone out)
@@ -43,6 +45,17 @@ export function hubGate({ registry, namespace, recordRequests = true, onError = 
 
     if (!state.exists) return { ok: false, reason: "unknown_namespace" };
     if (!state.enabled) return { ok: false, reason: "namespace_disabled" };
+
+    // A namespace is bound to the URL(s) it was registered for. A request that reaches the site at
+    // any other origin — a staging copy that borrowed production's namespace, say — gets nothing
+    // from this registry: no grants, no open-site access. Checked wherever a request is in hand
+    // (the browser's poll and every guarded request). The bot's scan has no request; the hub checks
+    // where that QR was minted instead (see hub.js). A site with no origins is a legacy row that
+    // predates binding, and is left alone until an admin binds it.
+    if (state.origins.length && ctx?.request) {
+      const origin = originOfRequest(ctx.request);
+      if (!origin || !state.origins.includes(origin)) return { ok: false, reason: "origin_not_allowed" };
+    }
     // Before the grant check, and in every mode: a ban holds even for someone with a grant, and on
     // a site that is open to everyone it is the only way anyone is refused. A blocked person is
     // also not recorded as an access request — the queue is for people an admin might approve.

@@ -63,12 +63,19 @@ wrangler kv namespace create LOGINS
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<hub>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 ```
 
-Already running an earlier version of the hub? Apply `migrations/hub-d1-upgrade-access.sql` **once**
-to add open sites and block lists. Every existing site stays approved-people-only, so nobody gains
-or loses access (a second run fails loudly and changes nothing).
+Already running an earlier version of the hub? Apply the upgrade scripts you have not yet run, each
+**once**, in this order:
+
+| Script | Adds | Effect on existing sites |
+| --- | --- | --- |
+| `hub-d1-upgrade-access.sql` | open sites and block lists | None: every site stays approved-people-only |
+| `hub-d1-upgrade-origins.sql` | binding a site to its URL | None yet: existing sites are *unbound* and keep working from anywhere. The console flags each one; open it and add its URL, and the namespace is bound from then on |
+
+A second run of either fails loudly and changes nothing. `createNamespace()` now requires `origins`,
+so code that seeds sites programmatically needs the URL added.
 
 **2. Open `https://<hub>/admin`** and scan the QR with a Telegram account whose numeric id is in
-`superAdmins`. Add a site (`docs`, "Internal docs"). Grant people access.
+`superAdmins`. Add a site (`docs`, "Internal docs", `https://docs.example.com`). Grant people access.
 
 **3. Each site** — [`examples/hub/site-worker.js`](../examples/hub/site-worker.js). It is
 `createTelegramQrAuth` with the hub's gate already wired in:
@@ -103,7 +110,8 @@ Server-rendered, no JavaScript, no external requests. Everything is behind the s
 
 | Area | What a super admin can do |
 | --- | --- |
-| **Sites** | Add a site (namespace + display name), rename it, switch sign-in off and on, delete it |
+| **Sites** | Add a site (namespace, display name and the URL it is served from), rename it, switch sign-in off and on, delete it |
+| **Site URLs** | Add or remove the origins a site is served from — the namespace works only there |
 | **Who can sign in** | Keep a site to approved people (the default), or [open it to anyone](#open-sites) with a Telegram account |
 | **People with access** | Grant by Telegram id (paste many at once, with an optional note), revoke |
 | **Waiting for approval** | People who scanned a site's QR and were refused. Approve with one click, dismiss, or block — no need to ask anyone for their numeric id |
@@ -133,6 +141,49 @@ with an empty or broken registry, they can sign in and repair it. Admins you add
 extra, removable, and recorded with who added them. All super admins are equal; there are no
 per-site administrators.
 
+## Binding a site to its URL
+
+A namespace is not a domain; it is a label in the QR. Left at that, two sites at different URLs could
+share one namespace — and with it one access list — by accident, the usual case being a staging copy
+that borrowed production's configuration. So every site is **bound to the origin or origins it is
+served from** (scheme, host and port; `https://docs.example.com`, not a path). It is required to add a
+site, and enforced in two places:
+
+- **At every request to the site.** The site's gate compares the origin the request arrived at with
+  the registered list. A visitor, a session cookie or a poll arriving at any other origin gets
+  `origin_not_allowed` and nothing from this registry — no grant, and no open-site access either. The
+  same cookie secret does not help: a copy of the site on an unregistered URL cannot use the access
+  list.
+- **At the scan.** The QR records where it was shown. The hub compares that with the site's origins
+  before it confirms anything, and tells the person when a code came from a site that is not
+  registered for that namespace. The code is not spent, and nothing is remembered about it.
+
+What the origin means in practice:
+
+- It is **exactly what `request.url` shows**: scheme, host and port must match. `http` is refused
+  (except for `localhost` and `127.0.0.1`, so you can register a dev server), and `www.` is a
+  different origin. If people can reach the site at both a custom domain and its `workers.dev`
+  address, register both.
+- A site can have up to ten, so a custom domain, its `workers.dev` address and a preview can coexist.
+  The console never lets you remove the last one; add the new URL first.
+- Removing a URL takes effect on the next request from it.
+- **Both redirects are already fixed points.** After sign-in the browser is sent only to a path on the
+  *same* site, and the QR link only ever leads to `t.me/<your bot>`. Binding the namespace to the
+  origin is what ties those together: the site that shows the QR, the namespace on the bot, and the
+  site that receives the cookie are one origin.
+- A site must record where each QR is shown, which is the default; `createSiteAuth` refuses
+  `captureClient: false` for that reason.
+
+**What this does not do.** The origin on a QR is recorded by the site that mints it, and every site
+holds the shared login store and registry, so a *malicious* Worker with those bindings could write
+whatever origin it liked. Binding stops mistakes — staging on production's namespace, a copy deployed
+to the wrong place, a site nobody registered — and makes each one visible; it is not a defence against
+a hostile site you have already given the shared bindings. Keep those bindings to Workers you trust.
+
+Sites registered before binding existed are **unbound** (no origins) and keep working from anywhere,
+so upgrading locks nobody out. The console flags each one on the dashboard and its page: open it and
+add its URL. Unbound is never a state a new site can be in.
+
 ## Open sites
 
 A site normally lets in only people you grant access to. For a public site — a forum, say — you can
@@ -140,7 +191,7 @@ instead let in **anyone with a Telegram account**. It is a setting on one site, 
 approved-people-only until you change it.
 
 ```js
-await registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+await registry.createNamespace({ namespace: "forum", name: "The forum", origins: ["https://forum.example.com"], access: "anyone" });
 // or, in the console: the site's page → Who can sign in → Open to anyone
 ```
 
@@ -200,8 +251,9 @@ ask for access.
 
 - **Sites use the default token size.** The hub recognises a scan by its shape (`<namespace>_<32 hex
   characters>`); a site that sets a custom `tokenBytes` would not be recognised.
-- **One namespace, one site.** Two Workers sharing a namespace share a login queue and an access
-  list. Give each site its own.
+- **One namespace, one site (now enforced).** A namespace works only from its registered URLs, so a
+  second site cannot silently borrow it. Two sites that genuinely should share an audience can be
+  registered under one namespace by giving it both URLs.
 - **Deleting a site deletes its grants and its block list.** Re-adding the same namespace later
   starts with nobody, and with nobody banned.
 - **Switching a site off keeps its grants.** Nobody can sign in, and open sessions fail on their next
@@ -243,11 +295,11 @@ a new environment, import a list, or mirror grants from another system:
 
 ```js
 const registry = new D1HubStore(env.HUB_DB);
-await registry.createNamespace({ namespace: "docs", name: "Internal docs" });
+await registry.createNamespace({ namespace: "docs", name: "Internal docs", origins: ["https://docs.example.com"] });
 await registry.addGrant({ namespace: "docs", id: 123456789, label: "Ada" });
 await registry.addBlock({ namespace: "docs", id: 555, label: "left the company" });
 await registry.access("docs", 123456789);
-// { exists: true, enabled: true, mode: "granted", granted: true, blocked: false }
+// { exists: true, enabled: true, mode: "granted", origins: ["https://docs.example.com"], granted: true, blocked: false }
 ```
 
 Direct writes skip the audit log; call `registry.appendAudit({ actor, action, target, detail })`
@@ -300,6 +352,7 @@ A custom sign-in page or log can tell these apart (`ctx.stage` is as in README �
 | `not_granted` | The site needs grants and this person has none |
 | `blocked` | This person is on the site's block list (beats a grant; applies to open sites) |
 | `namespace_disabled` | The site is switched off in the console (open or not) |
+| `origin_not_allowed` | The request reached the site at a URL its namespace is not registered for |
 | `unknown_namespace` | The site is not registered (deleted, or never added) |
 | `not_admin` | A scan of the console's QR by someone who is not a super admin |
 | `hub_unavailable` | The registry could not be read — transient, retry |

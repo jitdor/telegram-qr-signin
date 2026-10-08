@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS hub_namespaces (
   -- account not in hub_blocks). Grants are kept, not consulted, while a site is 'anyone', so
   -- switching back restores them.
   access TEXT NOT NULL DEFAULT 'granted' CHECK (access IN ('granted', 'anyone')),
+  -- The URLs the site is served from, as a JSON array of origins: '["https://docs.example.com"]'.
+  -- A request from any other origin is refused, and so is a scan of a QR minted anywhere else, so a
+  -- namespace cannot be used from a site it was not registered for. '[]' means unbound: only rows
+  -- created before binding existed, since the store refuses to create a site without one.
+  origins TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL,
   created_by INTEGER
 );

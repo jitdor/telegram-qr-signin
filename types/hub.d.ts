@@ -16,6 +16,12 @@ export interface HubNamespace {
   name: string;
   enabled: boolean;
   access: HubAccessMode;
+  /**
+   * The origins (scheme + host + port) the site is served from. The namespace works only from these.
+   * Empty only for a site registered before binding existed: it is "unbound" and works from anywhere
+   * until an origin is added.
+   */
+  origins: string[];
   createdAt: number;
   createdBy: number | null;
 }
@@ -75,6 +81,8 @@ export interface HubAccess {
   enabled: boolean;
   /** The site's access mode. */
   mode: HubAccessMode;
+  /** The site's registered origins; empty means unbound (legacy). */
+  origins: string[];
   granted: boolean;
   /** On the site's block list. Beats `granted`, and applies in every mode. */
   blocked: boolean;
@@ -84,9 +92,14 @@ export interface HubAccess {
 export interface HubStore {
   listNamespaces(): Promise<HubNamespaceSummary[]>;
   getNamespace(namespace: string): Promise<HubNamespace | null>;
-  createNamespace(site: { namespace: string; name?: string; access?: HubAccessMode; createdBy?: number | null }): Promise<boolean>;
+  /** `origins` is required and must be non-empty: URLs such as "https://docs.example.com" (http only for localhost). Rejects otherwise. */
+  createNamespace(site: { namespace: string; name?: string; origins: string[]; access?: HubAccessMode; createdBy?: number | null }): Promise<boolean>;
   updateNamespace(namespace: string, changes: { name?: string; enabled?: boolean; access?: HubAccessMode }): Promise<boolean>;
-  /** Also removes the site's grants, blocks and requests. */
+  /** True if added; false if already there or the site does not exist. Rejects an invalid URL, or more than 10. */
+  addOrigin(namespace: string, url: string): Promise<boolean>;
+  /** True if removed; false if absent, or if it is the site's only origin (a site is never left unbound). */
+  removeOrigin(namespace: string, url: string): Promise<boolean>;
+  /** Switches the site off first, then removes its grants, blocks and requests. */
   deleteNamespace(namespace: string): Promise<boolean>;
 
   /** The one call a gate makes: one query per guarded request. */

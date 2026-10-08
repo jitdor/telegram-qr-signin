@@ -138,12 +138,10 @@ export function createHub(config) {
     if (parsed.namespace === ADMIN_NAMESPACE) return handleAdminStart(update);
 
     let site;
-    let live;
+    let record = null;
     try {
       site = await registry.getNamespace(parsed.namespace);
-      // Only a scan of a QR this hub's sites actually minted is worth remembering as a request;
-      // otherwise anyone could fill the list by messaging the bot made-up payloads.
-      live = site ? (await store.get(parsed.token, parsed.namespace))?.status === "pending" : false;
+      if (site) record = await store.get(parsed.token, parsed.namespace);
     } catch (err) {
       onError(err, update);
       await reply(message, "Couldn't check your access just now. Scan the same QR code again in a moment.");
@@ -152,6 +150,20 @@ export function createHub(config) {
 
     if (!site) {
       await reply(message, "That sign-in link isn't recognised. Go back to the sign-in page and scan the new QR code.");
+      return true;
+    }
+
+    // Only a scan of a QR a site actually minted is worth remembering as a request; otherwise
+    // anyone could fill the list by messaging the bot made-up payloads.
+    const live = record?.status === "pending";
+
+    // The namespace is bound to the site's URL(s). The QR records where it was shown, so a scan of
+    // one minted anywhere else — staging using production's namespace, a site that was never
+    // registered — is turned away before it can spend anything, and says why. A QR that is already
+    // gone falls through to the usual "expired" reply. (This relies on the site recording its origin
+    // honestly; it stops a mistake, not a hostile Worker that holds the shared bindings.)
+    if (record && site.origins.length && !site.origins.includes(record.client?.origin ?? "")) {
+      await reply(message, `That sign-in code came from a site that isn't registered for ${cleanName(site.name) || site.namespace}. Open the real site and scan the code it shows.`);
       return true;
     }
     return createStartHandler(botAuthFor(site, message.from, live), { telegram })(update);

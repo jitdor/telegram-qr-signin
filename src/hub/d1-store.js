@@ -7,7 +7,16 @@
 // admins acting at once cannot corrupt anything. A gate check is ONE query (`access`), because it
 // runs on every guarded request of every site.
 
-import { DEFAULT_ACCESS, assertAccessMode, assertSiteNamespace, cleanLabel, cleanName } from "./validate.js";
+import {
+  DEFAULT_ACCESS,
+  MAX_ORIGINS,
+  assertAccessMode,
+  assertOrigins,
+  assertSiteNamespace,
+  cleanLabel,
+  cleanName,
+  normalizeOrigin,
+} from "./validate.js";
 import { DEFAULT_REQUEST_CAP, DEFAULT_AUDIT_KEEP, DEFAULT_LIST_LIMIT } from "./store.js";
 
 // Table names are interpolated, not bound (SQLite cannot bind identifiers), so they are validated.
@@ -42,7 +51,7 @@ export class D1HubStore {
   async listNamespaces() {
     const { results } = await this.db
       .prepare(
-        `SELECT n.namespace, n.name, n.enabled, n.access, n.created_at, n.created_by,
+        `SELECT n.namespace, n.name, n.enabled, n.access, n.origins, n.created_at, n.created_by,
                 (SELECT COUNT(*) FROM ${this.t.grants} g WHERE g.namespace = n.namespace) AS users,
                 (SELECT COUNT(*) FROM ${this.t.requests} r WHERE r.namespace = n.namespace) AS requests
          FROM ${this.t.namespaces} n ORDER BY n.name COLLATE NOCASE, n.namespace`
@@ -54,21 +63,23 @@ export class D1HubStore {
 
   async getNamespace(namespace) {
     const row = await this.db
-      .prepare(`SELECT namespace, name, enabled, access, created_at, created_by FROM ${this.t.namespaces} WHERE namespace = ?1`)
+      .prepare(`SELECT namespace, name, enabled, access, origins, created_at, created_by FROM ${this.t.namespaces} WHERE namespace = ?1`)
       .bind(namespace)
       .first();
     return row ? rowToNamespace(row) : null;
   }
 
-  async createNamespace({ namespace, name, access = DEFAULT_ACCESS, createdBy = null }) {
+  /** One INSERT, origins included: there is no instant at which the site exists but is unbound. */
+  async createNamespace({ namespace, name, origins, access = DEFAULT_ACCESS, createdBy = null }) {
     assertSiteNamespace(namespace);
     assertAccessMode(access);
+    const bound = assertOrigins(origins);
     const res = await this.db
       .prepare(
-        `INSERT INTO ${this.t.namespaces} (namespace, name, enabled, access, created_at, created_by)
-         VALUES (?1, ?2, 1, ?3, ?4, ?5) ON CONFLICT (namespace) DO NOTHING`
+        `INSERT INTO ${this.t.namespaces} (namespace, name, enabled, access, origins, created_at, created_by)
+         VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6) ON CONFLICT (namespace) DO NOTHING`
       )
-      .bind(namespace, cleanName(name) || namespace, access, nowSeconds(), createdBy)
+      .bind(namespace, cleanName(name) || namespace, access, JSON.stringify(bound), nowSeconds(), createdBy)
       .run();
     return res.meta.changes > 0;
   }
@@ -91,8 +102,46 @@ export class D1HubStore {
     return res.meta.changes > 0;
   }
 
-  /** Grants, blocks and requests first, then the site — see MemoryHubStore.deleteNamespace for why. */
+  /**
+   * Adds a URL the site may be served from — a compare-and-swap on the site's own row, so two
+   * admins editing at once cannot lose each other's change. See MemoryHubStore.addOrigin.
+   */
+  async addOrigin(namespace, url) {
+    const origin = normalizeOrigin(url);
+    if (!origin) throw new Error("origin must be an https URL such as https://docs.example.com (http only for localhost)");
+    return this.#editOrigins(namespace, (list) => {
+      if (list.includes(origin)) return null;
+      if (list.length >= MAX_ORIGINS) throw new Error(`a site can have at most ${MAX_ORIGINS} origins`);
+      return [...list, origin];
+    });
+  }
+
+  /** See MemoryHubStore.removeOrigin: never removes a site's last origin. */
+  async removeOrigin(namespace, url) {
+    const origin = normalizeOrigin(url);
+    if (!origin) return false;
+    return this.#editOrigins(namespace, (list) => (list.includes(origin) && list.length > 1 ? list.filter((o) => o !== origin) : null));
+  }
+
+  /** Read the list, compute the next one, and write it only if nobody changed it meanwhile. */
+  async #editOrigins(namespace, change) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const row = await this.db.prepare(`SELECT origins FROM ${this.t.namespaces} WHERE namespace = ?1`).bind(namespace).first();
+      if (!row) return false;
+      const next = change(parseOrigins(row.origins, { forEdit: true }));
+      if (next === null) return false;
+      const res = await this.db
+        .prepare(`UPDATE ${this.t.namespaces} SET origins = ?3 WHERE namespace = ?1 AND origins = ?2`)
+        .bind(namespace, row.origins, JSON.stringify(next))
+        .run();
+      if (res.meta.changes > 0) return true;
+    }
+    throw new Error("D1HubStore: the site's origins kept changing underneath this edit; try again");
+  }
+
+  /** Switched off first, then grants, blocks and requests, then the site — see MemoryHubStore.deleteNamespace for why. */
   async deleteNamespace(namespace) {
+    await this.db.prepare(`UPDATE ${this.t.namespaces} SET enabled = 0 WHERE namespace = ?1`).bind(namespace).run();
     await this.db.prepare(`DELETE FROM ${this.t.grants} WHERE namespace = ?1`).bind(namespace).run();
     await this.db.prepare(`DELETE FROM ${this.t.blocks} WHERE namespace = ?1`).bind(namespace).run();
     await this.db.prepare(`DELETE FROM ${this.t.requests} WHERE namespace = ?1`).bind(namespace).run();
@@ -105,18 +154,19 @@ export class D1HubStore {
   async access(namespace, userId) {
     const row = await this.db
       .prepare(
-        `SELECT n.enabled AS enabled, n.access AS access,
+        `SELECT n.enabled AS enabled, n.access AS access, n.origins AS origins,
                 EXISTS (SELECT 1 FROM ${this.t.grants} g WHERE g.namespace = n.namespace AND g.telegram_id = ?2) AS granted,
                 EXISTS (SELECT 1 FROM ${this.t.blocks} b WHERE b.namespace = n.namespace AND b.telegram_id = ?2) AS blocked
          FROM ${this.t.namespaces} n WHERE n.namespace = ?1`
       )
       .bind(namespace, Number(userId))
       .first();
-    if (!row) return { exists: false, enabled: false, mode: DEFAULT_ACCESS, granted: false, blocked: false };
+    if (!row) return { exists: false, enabled: false, mode: DEFAULT_ACCESS, origins: [], granted: false, blocked: false };
     return {
       exists: true,
       enabled: Boolean(row.enabled),
       mode: row.access ?? DEFAULT_ACCESS,
+      origins: parseOrigins(row.origins),
       granted: Boolean(row.granted),
       blocked: Boolean(row.blocked),
     };
@@ -327,9 +377,30 @@ function rowToNamespace(row) {
     name: row.name,
     enabled: Boolean(row.enabled),
     access: row.access ?? DEFAULT_ACCESS,
+    origins: parseOrigins(row.origins),
     createdAt: Number(row.created_at),
     createdBy: row.created_by == null ? null : Number(row.created_by),
   };
+}
+
+/** Matches no real origin, so a site whose stored list cannot be read is refused rather than unbound. */
+const UNREADABLE = "(unreadable)";
+
+/**
+ * The site's origins from the stored JSON. A list that is damaged is reported as one origin that
+ * can never match — the site is shut, visibly, not silently opened to every URL as an empty list
+ * (the "unbound" state) would. `forEdit` reads only the valid entries, so adding an origin repairs it.
+ */
+function parseOrigins(value, { forEdit = false } = {}) {
+  let list;
+  try {
+    list = JSON.parse(value ?? "[]");
+  } catch {
+    list = null;
+  }
+  if (!Array.isArray(list)) return forEdit ? [] : [UNREADABLE];
+  const valid = list.filter((o) => typeof o === "string" && normalizeOrigin(o) === o);
+  return valid.length === 0 && list.length > 0 && !forEdit ? [UNREADABLE] : valid;
 }
 
 function rowToRequest(row) {

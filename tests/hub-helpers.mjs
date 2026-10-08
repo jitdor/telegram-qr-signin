@@ -44,6 +44,11 @@ export function makeSite({ store, registry }, namespace, extra = {}) {
   });
 }
 
+/** Mints a QR on `site` as a real visit would: with the request, so the QR records where it was shown. */
+export function login(site, host = `https://${site.namespace}.example`) {
+  return site.beginLogin({ request: makeRequest(`${host}/auth/login`) });
+}
+
 export function startUpdate(text, from, messageId = 7) {
   return { message: { message_id: messageId, chat: { id: from.id, type: "private" }, from, text } };
 }

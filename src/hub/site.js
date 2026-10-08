@@ -26,6 +26,9 @@ const NO_TELEGRAM = {
  * @param {Function} [config.authorize]  Optional extra gate, ANDed with the hub's — e.g. also
  *   require `chatMember(...)`. Needs `botToken` or `telegram`.
  * @param {boolean|(() => boolean)} [config.recordRequests]  See hubGate.
+ *
+ * The site is served from the URL(s) registered for its namespace in the console. Visitors reaching
+ * it at any other origin are refused, and so is a scan of a QR minted anywhere else.
  */
 export function createSiteAuth(config) {
   const { registry, namespace, authorize, recordRequests, botToken, telegram, ...rest } = config ?? {};
@@ -33,6 +36,12 @@ export function createSiteAuth(config) {
   assertSiteNamespace(namespace);
   if (!rest.session?.secret) {
     throw new Error("createSiteAuth: `session.secret` is required — a site has no bot token to fall back on");
+  }
+
+  // The hub binds a namespace to its site by the origin recorded when each QR is minted, so a site
+  // cannot opt out of recording it.
+  if (rest.captureClient === false) {
+    throw new Error("createSiteAuth: `captureClient` cannot be turned off — the hub uses it to check which site a QR came from");
   }
 
   const hub = hubGate({ registry, namespace, recordRequests });

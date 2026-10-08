@@ -24,6 +24,7 @@ import {
   cleanLabel,
   cleanName,
   describeUser,
+  normalizeOrigin,
   parseTelegramId,
   parseTelegramIds,
 } from "./validate.js";
@@ -34,6 +35,8 @@ const AUDIT_ROWS_SHOWN = 40;
 const OK_MESSAGES = {
   site_created: "Site added. Point its Worker at this namespace, then grant people access below.",
   site_saved: "Site settings saved.",
+  origin_added: "URL added. The site can now be served from it.",
+  origin_removed: "URL removed. Requests from it are refused from now on.",
   site_deleted: "Site deleted, along with its users.",
   grants_added: (n) => `Granted access to ${n} ${n === 1 ? "person" : "people"}.`,
   grants_none: "Everyone listed already had access.",
@@ -54,6 +57,11 @@ const ERR_MESSAGES = {
   bad_namespace: "A site id is 1–24 letters, digits or hyphens (no underscore).",
   reserved_namespace: "That id is reserved for the console itself.",
   site_exists: "A site with that id already exists.",
+  bad_url: "Enter the site's full URL, such as https://docs.example.com (https only; http is allowed for localhost).",
+  origin_exists: "That URL is already registered for this site.",
+  origin_last: "A site must keep at least one URL. Add the new one first, then remove this one.",
+  origin_missing: "That URL is not registered for this site.",
+  too_many_origins: "A site can have at most 10 URLs.",
   site_missing: "That site no longer exists.",
   no_ids: "Enter at least one Telegram user id.",
   bad_ids: "Some entries are not Telegram user ids — they are digits only, such as 123456789. Nothing was added.",
@@ -151,6 +159,8 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
       if (c === "grants" && rest.length === 3) return addGrants(ctx, b);
       if (c === "grants" && e === "remove" && rest.length === 5) return removeGrant(ctx, b, d);
       if (c === "access" && rest.length === 3) return setAccess(ctx, b);
+      if (c === "origins" && rest.length === 3) return addOrigin(ctx, b);
+      if (c === "origins" && d === "remove" && rest.length === 4) return removeOrigin(ctx, b);
       if (c === "blocks" && rest.length === 3) return addBlocks(ctx, b);
       if (c === "blocks" && e === "remove" && rest.length === 5) return removeBlock(ctx, b, d);
       if (c === "requests" && (e === "approve" || e === "dismiss" || e === "block") && rest.length === 5) return answerRequest(ctx, b, d, e);
@@ -204,7 +214,11 @@ ${flash(ctx.url)}
     <tbody>${sites
       .map(
         (s) => `<tr>
-      <td><a href="${adminPath}/ns/${esc(s.namespace)}">${esc(s.name)}</a></td>
+      <td><a href="${adminPath}/ns/${esc(s.namespace)}">${esc(s.name)}</a><br>${
+        s.origins.length
+          ? `<span class="muted small">${esc(s.origins[0])}${s.origins.length > 1 ? ` +${s.origins.length - 1}` : ""}</span>`
+          : '<span class="pill warn" title="Any Worker with the shared bindings can use this namespace">Not bound to a URL</span>'
+      }</td>
       <td><code>${esc(s.namespace)}</code></td>
       <td>${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}</td>
       <td class="num">${s.access === "anyone" ? '<span class="pill warn">Anyone</span>' : s.users}</td>
@@ -219,9 +233,10 @@ ${flash(ctx.url)}
     <div class="row">
       <label>Namespace<input name="namespace" required maxlength="24" pattern="[A-Za-z0-9\\-]{1,24}" placeholder="acme" autocomplete="off" spellcheck="false"></label>
       <label>Display name<input name="name" maxlength="60" placeholder="Acme dashboard" autocomplete="off"></label>
+      <label>Site URL<input name="url" required maxlength="200" placeholder="https://acme.example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>
       <button class="btn primary">Add site</button>
     </div>
-    <p class="hint">The namespace is what the site's code passes as <code>namespace</code>. Letters, digits and hyphens, up to 24. It cannot be changed later.</p>`)}
+    <p class="hint">The namespace is what the site's code passes as <code>namespace</code>: letters, digits and hyphens, up to 24, fixed once created. The URL is where the site is served from; the namespace works only there. You can add more URLs later.</p>`)}
 </section>
 
 <section>
@@ -282,6 +297,44 @@ ${flash(ctx.url)}
       <button class="btn primary">Save</button>
     </div>
     <p class="hint">Switching a site off locks everyone out of it on their next request. Their access is kept for when you switch it back on.</p>`)}
+</section>
+
+${
+  site.origins.length
+    ? ""
+    : `<section class="warn-zone">
+  <h2>Not bound to a URL</h2>
+  <p class="lead">This site was registered before sites were bound to URLs, so any Worker with the hub's shared bindings can use this namespace. Add the URL it is served from, below, to close that.</p>
+</section>`
+}
+
+<section>
+  <h2>Site URLs <span class="count">${site.origins.length}</span></h2>
+  <p class="lead">The namespace works only from these origins. A visitor reaching the site at any other address is refused, and so is a QR code shown anywhere else. Use the address as it appears in the browser, for example both your custom domain and its <code>workers.dev</code> address if people can reach either.</p>
+  ${
+    site.origins.length
+      ? `<div class="table-wrap"><table>
+    <thead><tr><th>Origin</th><th></th></tr></thead>
+    <tbody>${site.origins
+      .map(
+        (o) => `<tr>
+      <td><code>${esc(o)}</code></td>
+      <td class="act">${
+        site.origins.length > 1
+          ? postForm(ctx, `${base}/origins/remove`, `<input type="hidden" name="origin" value="${esc(o)}"><button class="btn danger">Remove</button>`, "inline")
+          : '<span class="muted small">only URL</span>'
+      }</td>
+    </tr>`
+      )
+      .join("")}</tbody></table></div>`
+      : ""
+  }
+  ${postForm(ctx, `${base}/origins`, `
+    <div class="row">
+      <label class="grow">Add a URL<input name="url" required maxlength="200" placeholder="https://acme.example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>
+      <button class="btn primary">Add URL</button>
+    </div>
+    <p class="hint">Scheme and host (and port, if not the default) are what count; any path is ignored. Removing a URL stops working for people on it immediately.</p>`)}
 </section>
 
 ${
@@ -418,11 +471,13 @@ ${
     } catch (err) {
       return redirect(adminPath, { err: /reserved/.test(err.message) ? "reserved_namespace" : "bad_namespace" });
     }
+    const origin = normalizeOrigin(String(form.get("url") ?? ""));
+    if (!origin) return redirect(adminPath, { err: "bad_url" });
     const name = cleanName(form.get("name")) || namespace;
-    if (!(await registry.createNamespace({ namespace, name, createdBy: Number(session.id) }))) {
+    if (!(await registry.createNamespace({ namespace, name, origins: [origin], createdBy: Number(session.id) }))) {
       return redirect(adminPath, { err: "site_exists" });
     }
-    await audit(session, "site.create", namespace, name);
+    await audit(session, "site.create", namespace, `${name}; ${origin}`);
     return redirect(`${adminPath}/ns/${namespace}`, { ok: "site_created" });
   }
 
@@ -438,6 +493,29 @@ ${
     if (enabled !== before.enabled) changes.push(enabled ? "enabled" : "disabled");
     if (changes.length) await audit(session, "site.update", namespace, changes.join("; "));
     return redirect(`${adminPath}/ns/${namespace}`, { ok: "site_saved" });
+  }
+
+  async function addOrigin({ form, session }, namespace) {
+    const site = await registry.getNamespace(namespace);
+    if (!site) return redirect(adminPath, { err: "site_missing" });
+    const back = `${adminPath}/ns/${namespace}`;
+    const origin = normalizeOrigin(String(form.get("url") ?? ""));
+    if (!origin) return redirect(back, { err: "bad_url" });
+    if (site.origins.length >= 10) return redirect(back, { err: "too_many_origins" });
+    if (!(await registry.addOrigin(namespace, origin))) return redirect(back, { err: "origin_exists" });
+    await audit(session, "origin.add", namespace, origin);
+    return redirect(back, { ok: "origin_added" });
+  }
+
+  async function removeOrigin({ form, session }, namespace) {
+    const site = await registry.getNamespace(namespace);
+    if (!site) return redirect(adminPath, { err: "site_missing" });
+    const back = `${adminPath}/ns/${namespace}`;
+    const origin = normalizeOrigin(String(form.get("origin") ?? ""));
+    if (!origin || !site.origins.includes(origin)) return redirect(back, { err: "origin_missing" });
+    if (!(await registry.removeOrigin(namespace, origin))) return redirect(back, { err: "origin_last" });
+    await audit(session, "origin.remove", namespace, origin);
+    return redirect(back, { ok: "origin_removed" });
   }
 
   async function setAccess({ form, session }, namespace) {
@@ -704,6 +782,7 @@ input:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{
 .flash.good{background:var(--good-bg);color:var(--good)}
 .flash.bad{background:var(--bad-bg);color:var(--bad)}
 .warn-zone{border-color:color-mix(in srgb,var(--warn) 45%,var(--rule));background:color-mix(in srgb,var(--warn-bg) 35%,var(--card))}
+.small{font-size:.8rem}
 .callout{border:1px dashed var(--rule);border-radius:12px;padding:14px 16px}
 .callout strong{display:block;margin-bottom:2px}
 .callout ul{margin:4px 0 12px;padding-left:1.2rem}

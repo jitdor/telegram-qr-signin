@@ -5,9 +5,11 @@
 //
 // The HubStore contract, for anyone writing their own:
 //
-//   Sites     listNamespaces() · getNamespace(ns) · createNamespace({ namespace, name, access?, createdBy })
+//   Sites     listNamespaces() · getNamespace(ns) · createNamespace({ namespace, name, origins, access?, createdBy })
 //             · updateNamespace(ns, { name?, enabled?, access? }) · deleteNamespace(ns)
-//   Access    access(ns, userId) -> { exists, enabled, mode, granted, blocked }
+//   Origins   addOrigin(ns, url) · removeOrigin(ns, origin)        (a site's `origins` come back on
+//             every site record: the URLs it may be served from)
+//   Access    access(ns, userId) -> { exists, enabled, mode, origins, granted, blocked }
 //                                                                     (the one call a gate makes)
 //   Admins    listAdmins() · isAdmin(id) · addAdmin({ id, label, addedBy }) · removeAdmin(id)
 //   Grants    listGrants(ns, { limit }) · addGrant({ namespace, id, label, addedBy }) · removeGrant(ns, id)
@@ -19,7 +21,16 @@
 // `create*` / `add*` return true if they made a row and false if it already existed (and leave the
 // existing row alone); `update*` / `remove*` return true if there was a row to change.
 
-import { DEFAULT_ACCESS, assertAccessMode, assertSiteNamespace, cleanLabel, cleanName } from "./validate.js";
+import {
+  DEFAULT_ACCESS,
+  MAX_ORIGINS,
+  assertAccessMode,
+  assertOrigins,
+  assertSiteNamespace,
+  cleanLabel,
+  cleanName,
+  normalizeOrigin,
+} from "./validate.js";
 
 export const DEFAULT_REQUEST_CAP = 100;
 export const DEFAULT_AUDIT_KEEP = 1000;
@@ -51,6 +62,7 @@ export class MemoryHubStore {
       .sort((a, b) => compare(a.name.toLowerCase(), b.name.toLowerCase()) || compare(a.namespace, b.namespace))
       .map((record) => ({
         ...record,
+        origins: [...record.origins],
         users: this.grants.get(record.namespace)?.size ?? 0,
         requests: this.requests.get(record.namespace)?.size ?? 0,
       }));
@@ -58,18 +70,25 @@ export class MemoryHubStore {
 
   async getNamespace(namespace) {
     const record = this.namespaces.get(namespace);
-    return record ? { ...record } : null;
+    return record ? { ...record, origins: [...record.origins] } : null;
   }
 
-  async createNamespace({ namespace, name, access = DEFAULT_ACCESS, createdBy = null }) {
+  /**
+   * `origins` is required: a site is born bound to the URL(s) it is served from, so there is no
+   * moment at which a namespace exists but any Worker can use it. (Rows from before binding existed
+   * have none and keep working unbound until an admin adds one — see the upgrade script.)
+   */
+  async createNamespace({ namespace, name, origins, access = DEFAULT_ACCESS, createdBy = null }) {
     assertSiteNamespace(namespace);
     assertAccessMode(access);
+    const bound = assertOrigins(origins);
     if (this.namespaces.has(namespace)) return false;
     this.namespaces.set(namespace, {
       namespace,
       name: cleanName(name) || namespace,
       enabled: true,
       access,
+      origins: bound,
       createdAt: nowSeconds(),
       createdBy,
     });
@@ -87,12 +106,42 @@ export class MemoryHubStore {
   }
 
   /**
+   * Adds a URL the site may be served from. True if added; false if it was already there or the site
+   * does not exist. Throws for a URL that is not a valid origin, or past MAX_ORIGINS.
+   */
+  async addOrigin(namespace, url) {
+    const origin = normalizeOrigin(url);
+    if (!origin) throw new Error("origin must be an https URL such as https://docs.example.com (http only for localhost)");
+    const record = this.namespaces.get(namespace);
+    if (!record || record.origins.includes(origin)) return false;
+    if (record.origins.length >= MAX_ORIGINS) throw new Error(`a site can have at most ${MAX_ORIGINS} origins`);
+    record.origins.push(origin);
+    return true;
+  }
+
+  /**
+   * Removes a URL. True if removed; false if it was not there, or it is the site's only one — a
+   * site is never left unbound by removing origins, only by being legacy.
+   */
+  async removeOrigin(namespace, url) {
+    const origin = normalizeOrigin(url);
+    const record = this.namespaces.get(namespace);
+    if (!origin || !record || !record.origins.includes(origin) || record.origins.length === 1) return false;
+    record.origins = record.origins.filter((o) => o !== origin);
+    return true;
+  }
+
+  /**
    * Removes the site and everything that hung off it. Grants go first: if this is interrupted, the
    * site is left with fewer users than before, never with users and no site to attach them to
    * (which would hand them back their access if the name were registered again). Blocks go with
    * them, so a re-registered site does not inherit a stranger's ban list.
    */
   async deleteNamespace(namespace) {
+    // Switched off first: if this is interrupted partway, the site is dead, not half-removed in a
+    // way that could leave it open (an open site that has lost its grants still lets everyone in).
+    const record = this.namespaces.get(namespace);
+    if (record) record.enabled = false;
     this.grants.delete(namespace);
     this.blocks.delete(namespace);
     this.requests.delete(namespace);
@@ -103,12 +152,13 @@ export class MemoryHubStore {
 
   async access(namespace, userId) {
     const record = this.namespaces.get(namespace);
-    if (!record) return { exists: false, enabled: false, mode: DEFAULT_ACCESS, granted: false, blocked: false };
+    if (!record) return { exists: false, enabled: false, mode: DEFAULT_ACCESS, origins: [], granted: false, blocked: false };
     const id = Number(userId);
     return {
       exists: true,
       enabled: record.enabled,
       mode: record.access,
+      origins: [...record.origins],
       granted: Boolean(this.grants.get(namespace)?.has(id)),
       blocked: Boolean(this.blocks.get(namespace)?.has(id)),
     };

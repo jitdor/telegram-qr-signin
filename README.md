@@ -620,7 +620,8 @@ const auth = createSiteAuth({ namespace: "docs", botUsername, store, registry, s
 ```
 
 Super admins sign in to `/admin` with the same QR scan, register sites, grant and revoke people per
-site, approve people who were turned away, block people, and see an audit log. A site can also be
+site, approve people who were turned away, block people, and see an audit log. A namespace is bound
+to the URL(s) its site is served from, so a staging copy or a stray deployment cannot borrow it. A site can also be
 opened to anyone with a Telegram account (a forum, say) — a deliberate, confirmed step that leaves
 the site responsible for its own accounts. Revocation applies on the person's
 next request. The console is server-rendered with no JavaScript, CSRF-protected, and every change is

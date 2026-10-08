@@ -37,6 +37,51 @@ export function assertSiteNamespace(namespace) {
   return namespace;
 }
 
+/** How many URLs one site may be served from (a custom domain, a workers.dev address, a preview…). */
+export const MAX_ORIGINS = 10;
+
+/**
+ * "https://Docs.Example.com:443/any/path?x" -> "https://docs.example.com", or null.
+ *
+ * A site is bound to an ORIGIN — scheme, host, port — which is what a browser (and `request.url`)
+ * identifies a site by; the path is irrelevant, so one is accepted and dropped. https only, except
+ * for localhost and 127.0.0.1, so a site under development can be registered. Credentials in the URL
+ * are refused outright.
+ */
+export function normalizeOrigin(value) {
+  if (typeof value !== "string" || value.length > 200) return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (url.username || url.password) return null;
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol === "https:" || (url.protocol === "http:" && local)) return url.origin;
+  return null;
+}
+
+/** The origin a request was made to, normalised the same way as a registered one. */
+export function originOfRequest(request) {
+  try {
+    return new URL(request.url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/** Throws unless `origins` is a non-empty list (at most MAX_ORIGINS) of valid origins. Returns them normalised and de-duplicated. */
+export function assertOrigins(origins) {
+  const list = Array.isArray(origins) ? origins : [];
+  const clean = [...new Set(list.map(normalizeOrigin))];
+  if (!clean.length || clean.includes(null)) {
+    throw new Error("origins must be a non-empty list of https URLs such as https://docs.example.com (http only for localhost)");
+  }
+  if (clean.length > MAX_ORIGINS) throw new Error(`a site can have at most ${MAX_ORIGINS} origins`);
+  return clean;
+}
+
 /** A Telegram user id: a positive safe integer. Returns it as a number, or null. */
 export function parseTelegramId(value) {
   const text = String(value ?? "").trim();

@@ -8,11 +8,11 @@ import { MemoryHubStore } from "../src/hub/store.js";
 import { MemoryLoginStore } from "../src/stores/memory.js";
 import { chatMember } from "../src/gates.js";
 import { makeFakeTelegram, makeRequest, cookieFrom } from "./helpers.mjs";
-import { ROOT, ALICE, BOB, MALLORY, ORIGIN, makeHub, makeSite, startUpdate, webhookRequest, lastReply, signInToConsole } from "./hub-helpers.mjs";
+import { ROOT, ALICE, BOB, MALLORY, ORIGIN, makeHub, makeSite, login, startUpdate, webhookRequest, lastReply, signInToConsole } from "./hub-helpers.mjs";
 
 /** Mints a QR on a site, scans it through the hub's webhook, polls the site. */
 async function signInToSite(ctx, site, user) {
-  const { token } = await site.beginLogin();
+  const { token } = await login(site);
   const response = await ctx.hub.webhook(webhookRequest(startUpdate(`/start ${site.namespace}_${token}`, user)));
   assert.equal(response.status, 200);
   const polled = await site.poll(makeRequest(`https://${site.namespace}.example/auth/poll?token=${token}`));
@@ -23,8 +23,8 @@ async function signInToSite(ctx, site, user) {
 
 async function setup() {
   const ctx = makeHub();
-  await ctx.registry.createNamespace({ namespace: "acme", name: "Acme dashboard" });
-  await ctx.registry.createNamespace({ namespace: "wiki", name: "Team wiki" });
+  await ctx.registry.createNamespace({ namespace: "acme", origins: ["https://acme.example"], name: "Acme dashboard" });
+  await ctx.registry.createNamespace({ namespace: "wiki", origins: ["https://wiki.example"], name: "Team wiki" });
   await ctx.registry.addGrant({ namespace: "acme", id: ALICE.id });
   ctx.acme = makeSite(ctx, "acme");
   ctx.wiki = makeSite(ctx, "wiki");
@@ -56,7 +56,7 @@ test("one bot, many sites: a grant on one site opens nothing on another", async 
 test("a QR minted for one site cannot be redeemed as another", async () => {
   const ctx = await setup();
   await ctx.registry.addGrant({ namespace: "wiki", id: ALICE.id });
-  const { token } = await ctx.acme.beginLogin();
+  const { token } = await login(ctx.acme);
 
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start wiki_${token}`, ALICE)));
   assert.match(lastReply(ctx.telegram), /expired or was already used/i);
@@ -178,7 +178,7 @@ test("a registry outage while the hub looks up a scan gets a retry message, and 
   ctx.registry.getNamespace = async () => {
     throw new Error("D1 is down");
   };
-  const { token } = await ctx.acme.beginLogin();
+  const { token } = await login(ctx.acme);
   const response = await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
   assert.equal(response.status, 200);
   assert.match(lastReply(ctx.telegram), /try again|scan the same/i);
@@ -199,7 +199,7 @@ test("site names are plain text in bot messages: no markup mode, and no line bre
 
 test("a site open to anyone signs in a stranger with no grant, and records nothing about them", async () => {
   const ctx = await setup();
-  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
   const forum = makeSite(ctx, "forum");
 
   const result = await signInToSite(ctx, forum, MALLORY); // no grant anywhere
@@ -211,14 +211,14 @@ test("a site open to anyone signs in a stranger with no grant, and records nothi
 
 test("open means open to that site only: the same stranger is still refused elsewhere", async () => {
   const ctx = await setup();
-  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
   assert.equal((await signInToSite(ctx, makeSite(ctx, "forum"), MALLORY)).status, "confirmed");
   assert.equal((await signInToSite(ctx, ctx.acme, MALLORY)).status, "pending");
 });
 
 test("a blocked person is refused on an open site, told plainly, and the QR stays usable", async () => {
   const ctx = await setup();
-  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
   await ctx.registry.addBlock({ namespace: "forum", id: MALLORY.id });
   const forum = makeSite(ctx, "forum");
 
@@ -247,7 +247,7 @@ test("a block beats a grant, with its own reason, and does not clog the approval
 
 test("blocking someone ends their open session on their next request, in either mode", async () => {
   const ctx = await setup();
-  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
   const forum = makeSite(ctx, "forum");
 
   for (const [site, user, host] of [[ctx.acme, ALICE, "acme"], [forum, MALLORY, "forum"]]) {
@@ -280,7 +280,7 @@ test("switching a site between modes takes effect on the next request and keeps 
 
 test("a site that is switched off stays off, whatever its mode", async () => {
   const ctx = await setup();
-  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
   await ctx.registry.updateNamespace("forum", { enabled: false });
   const forum = makeSite(ctx, "forum");
   assert.equal((await signInToSite(ctx, forum, BOB)).status, "pending");
@@ -297,7 +297,7 @@ test("the refusal text follows the gate's verdict, even if the site changes betw
     await ctx.registry.updateNamespace("acme", { enabled: false });
     return real(...args);
   };
-  const { token } = await ctx.acme.beginLogin();
+  const { token } = await login(ctx.acme);
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, MALLORY)));
   assert.match(lastReply(ctx.telegram), /switched off/i);
 });
@@ -309,6 +309,126 @@ test("a hostile site name cannot reach the refusal text as anything but plain wo
   const text = lastReply(ctx.telegram);
   assert.ok(!text.split("\n")[0].includes("\n"));
   assert.match(text.split("\n")[0], /^🔒 You don't have access to Acme Send your password to me yet\.$/, "collapsed onto one line, like every other name");
+});
+
+// --- Binding a namespace to its URL ------------------------------------------------------------
+
+const STAGING = "https://staging.example";
+
+test("a QR shown at a URL the namespace is not registered for is refused at the scan, and says why", async () => {
+  const ctx = await setup();
+  // Staging copied production's config, namespace included, but is not a registered URL.
+  const { token } = await login(ctx.acme, STAGING);
+
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE))); // Alice IS granted
+  assert.match(lastReply(ctx.telegram), /isn't registered for Acme dashboard/i);
+  assert.equal((await ctx.store.get(token, "acme")).status, "pending", "nothing was spent or confirmed");
+  assert.deepEqual(await ctx.registry.listRequests("acme"), [], "and nothing is remembered about it");
+});
+
+test("a QR that records no origin cannot be matched to the site, so it is refused too", async () => {
+  const ctx = await setup();
+  const { token } = await ctx.acme.beginLogin(); // no request: nothing recorded about where it was shown
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
+  assert.match(lastReply(ctx.telegram), /isn't registered for/i);
+  assert.equal((await ctx.store.get(token, "acme")).status, "pending");
+});
+
+test("a granted person's session is worthless at any other URL, even with the same cookie secret", async () => {
+  const ctx = await setup();
+  const { cookie } = await signInToSite(ctx, ctx.acme, ALICE);
+
+  const home = await ctx.acme.guard(makeRequest("https://acme.example/", { cookie }));
+  assert.equal(home.ok, true);
+
+  // The very same cookie, presented to a copy of the site served from somewhere else.
+  const elsewhere = await ctx.acme.guard(makeRequest(`${STAGING}/`, { cookie }));
+  assert.deepEqual([elsewhere.ok, elsewhere.reason, elsewhere.response.status], [false, "origin_not_allowed", 403]);
+});
+
+test("origin is the whole of scheme, host and port: near misses are refused", async () => {
+  const ctx = await setup();
+  const { cookie } = await signInToSite(ctx, ctx.acme, ALICE);
+  for (const url of ["http://acme.example/", "https://acme.example:8443/", "https://www.acme.example/", "https://acme.example.evil.example/", "https://evilacme.example/"]) {
+    const result = await ctx.acme.guard(makeRequest(url, { cookie }));
+    assert.equal(result.reason, "origin_not_allowed", url);
+  }
+  // …while a different path, query or the default port is the same origin.
+  for (const url of ["https://acme.example/admin?x=1", "https://acme.example:443/", "https://ACME.example/"]) {
+    assert.equal((await ctx.acme.guard(makeRequest(url, { cookie }))).ok, true, url);
+  }
+});
+
+test("the browser's poll is refused from an unregistered URL as well", async () => {
+  const ctx = await setup();
+  const { token } = await login(ctx.acme); // minted at the right place and scanned legitimately
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
+  assert.equal((await ctx.store.get(token, "acme")).status, "confirmed");
+
+  const polled = await (await ctx.acme.poll(makeRequest(`${STAGING}/auth/poll?token=${token}`))).json();
+  assert.deepEqual([polled.status, polled.reason], ["denied", "origin_not_allowed"]);
+});
+
+test("registering a second URL makes both work; removing one stops it on the next request", async () => {
+  const ctx = await setup();
+  await ctx.registry.addOrigin("acme", STAGING);
+  const both = [["https://acme.example", ALICE], [STAGING, ALICE]];
+  const cookies = [];
+  for (const [host, user] of both) {
+    const { token } = await login(ctx.acme, host);
+    await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, user)));
+    const polled = await ctx.acme.poll(makeRequest(`${host}/auth/poll?token=${token}`));
+    assert.equal((await polled.json()).status, "confirmed", host);
+    cookies.push(`${ctx.acme.cookieName}=${cookieFrom(polled, ctx.acme.cookieName)}`);
+  }
+  assert.equal((await ctx.acme.guard(makeRequest(`${STAGING}/`, { cookie: cookies[1] }))).ok, true);
+
+  await ctx.registry.removeOrigin("acme", STAGING);
+  assert.equal((await ctx.acme.guard(makeRequest(`${STAGING}/`, { cookie: cookies[1] }))).reason, "origin_not_allowed");
+  assert.equal((await ctx.acme.guard(makeRequest("https://acme.example/", { cookie: cookies[0] }))).ok, true);
+});
+
+test("binding applies to an open site too: the whole world still cannot use it from an unregistered URL", async () => {
+  const ctx = await setup();
+  await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
+  const forum = makeSite(ctx, "forum");
+  assert.equal((await signInToSite(ctx, forum, MALLORY)).status, "confirmed");
+
+  const { token } = await login(forum, STAGING);
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start forum_${token}`, BOB)));
+  assert.match(lastReply(ctx.telegram), /isn't registered/i);
+  assert.equal((await forum.authorize({ id: BOB.id }, { request: makeRequest(`${STAGING}/`), stage: "session" })).reason, "origin_not_allowed");
+});
+
+test("a legacy site with no origins keeps working from anywhere until it is bound, then stops", async () => {
+  const ctx = await setup();
+  ctx.registry.namespaces.get("acme").origins = []; // as left by the upgrade script
+  const { token } = await login(ctx.acme, STAGING);
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
+  assert.equal((await ctx.store.get(token, "acme")).status, "confirmed", "unbound: nothing is checked");
+  assert.equal((await ctx.acme.guard(makeRequest("https://anywhere.example/", { cookie: (await signInToSite(ctx, ctx.acme, ALICE)).cookie }))).ok, true);
+
+  await ctx.registry.addOrigin("acme", "https://acme.example");
+  const again = await login(ctx.acme, STAGING);
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${again.token}`, ALICE)));
+  assert.equal((await ctx.store.get(again.token, "acme")).status, "pending", "bound now: the same scan is refused");
+});
+
+test("the origin check needs a request: the gate at the scan itself defers to the hub's check", async () => {
+  const ctx = await setup();
+  assert.equal(await ctx.acme.authorize({ id: ALICE.id }, { stage: "confirm" }), true);
+  assert.equal((await ctx.acme.authorize({ id: ALICE.id }, { stage: "session", request: makeRequest(`${STAGING}/`) })).reason, "origin_not_allowed");
+});
+
+test("the console's own sign-in is not bound to a site's URL", async () => {
+  const ctx = await setup();
+  assert.match(await signInToConsole(ctx.hub, ROOT), /^hub_admin_session=/);
+});
+
+test("a site cannot turn off the recording the hub's binding relies on", () => {
+  const ctx = makeHub();
+  assert.throws(() => makeSite(ctx, "acme", { captureClient: false }), /captureClient/);
+  assert.ok(makeSite(ctx, "acme", { captureClient: true }));
 });
 
 // --- createSiteAuth ----------------------------------------------------------------------------

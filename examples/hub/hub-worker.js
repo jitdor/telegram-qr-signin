@@ -26,7 +26,8 @@ export default {
       // Where a scan is handed from the bot to the site's browser. Every site binds the same one.
       store: new KVLoginStore(env.LOGINS),
 
-      // The access list. Every site reads it on each guarded request; only this Worker writes it.
+      // The access list. Every site reads it on each guarded request; this Worker's console writes it
+      // (a site's own moderation may also call registry.addBlock to ban someone — see docs/hub.md).
       registry: new D1HubStore(env.HUB_DB),
 
       // Bootstrap admins: "111,222". They cannot be removed from the console, so you cannot lock

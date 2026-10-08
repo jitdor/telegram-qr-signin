@@ -195,6 +195,122 @@ test("site names are plain text in bot messages: no markup mode, and no line bre
   assert.ok(!/Acme[^\n]*\n/.test(sent.payload.text.split("\n\n")[0]), "the name itself contributes no line break");
 });
 
+// --- Open sites and block lists ----------------------------------------------------------------
+
+test("a site open to anyone signs in a stranger with no grant, and records nothing about them", async () => {
+  const ctx = await setup();
+  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  const forum = makeSite(ctx, "forum");
+
+  const result = await signInToSite(ctx, forum, MALLORY); // no grant anywhere
+  assert.equal(result.status, "confirmed");
+  assert.match(lastReply(ctx.telegram), /signed in to The forum/i);
+  assert.deepEqual(await ctx.registry.listRequests("forum"), [], "an open site has nobody to approve");
+  assert.equal((await forum.guard(makeRequest("https://forum.example/", { cookie: result.cookie }))).session.id, MALLORY.id);
+});
+
+test("open means open to that site only: the same stranger is still refused elsewhere", async () => {
+  const ctx = await setup();
+  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  assert.equal((await signInToSite(ctx, makeSite(ctx, "forum"), MALLORY)).status, "confirmed");
+  assert.equal((await signInToSite(ctx, ctx.acme, MALLORY)).status, "pending");
+});
+
+test("a blocked person is refused on an open site, told plainly, and the QR stays usable", async () => {
+  const ctx = await setup();
+  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.addBlock({ namespace: "forum", id: MALLORY.id });
+  const forum = makeSite(ctx, "forum");
+
+  const result = await signInToSite(ctx, forum, MALLORY);
+  assert.equal(result.status, "pending");
+  assert.match(lastReply(ctx.telegram), /can't sign in to The forum/i);
+  assert.doesNotMatch(lastReply(ctx.telegram), /Telegram ID|administrator/, "no invitation to ask for access");
+  assert.equal((await ctx.store.get(result.token, "forum")).status, "pending", "the real owner of the QR can still use it");
+  assert.deepEqual(await ctx.registry.listRequests("forum"), []);
+
+  assert.equal((await signInToSite(ctx, forum, BOB)).status, "confirmed", "everyone else is unaffected");
+});
+
+test("a block beats a grant, with its own reason, and does not clog the approval queue", async () => {
+  const ctx = await setup();
+  await ctx.registry.addBlock({ namespace: "acme", id: ALICE.id }); // Alice holds a grant on Acme
+  const result = await signInToSite(ctx, ctx.acme, ALICE);
+  assert.equal(result.status, "pending");
+  assert.match(lastReply(ctx.telegram), /can't sign in to Acme dashboard/i);
+  assert.deepEqual(await ctx.registry.listRequests("acme"), []);
+
+  const gate = ctx.acme.authorize;
+  assert.deepEqual(await gate({ id: ALICE.id }, { stage: "session" }), { ok: false, reason: "blocked" });
+  assert.deepEqual(await gate({ id: MALLORY.id }, { stage: "session" }), { ok: false, reason: "not_granted" });
+});
+
+test("blocking someone ends their open session on their next request, in either mode", async () => {
+  const ctx = await setup();
+  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  const forum = makeSite(ctx, "forum");
+
+  for (const [site, user, host] of [[ctx.acme, ALICE, "acme"], [forum, MALLORY, "forum"]]) {
+    const { cookie } = await signInToSite(ctx, site, user);
+    const url = `https://${host}.example/`;
+    assert.equal((await site.guard(makeRequest(url, { cookie }))).ok, true);
+
+    await ctx.registry.addBlock({ namespace: host, id: user.id });
+    const after = await site.guard(makeRequest(url, { cookie }));
+    assert.deepEqual([after.ok, after.reason, after.response.status], [false, "blocked", 403], host);
+
+    await ctx.registry.removeBlock(host, user.id);
+    assert.equal((await site.guard(makeRequest(url, { cookie }))).ok, true, `${host}: unblocking restores access`);
+  }
+});
+
+test("switching a site between modes takes effect on the next request and keeps every grant", async () => {
+  const ctx = await setup();
+  await ctx.registry.updateNamespace("acme", { access: "anyone" });
+  const stranger = await signInToSite(ctx, ctx.acme, MALLORY);
+  assert.equal(stranger.status, "confirmed");
+  const alice = await signInToSite(ctx, ctx.acme, ALICE);
+
+  await ctx.registry.updateNamespace("acme", { access: "granted" });
+  const url = "https://acme.example/";
+  const out = await ctx.acme.guard(makeRequest(url, { cookie: stranger.cookie }));
+  assert.deepEqual([out.ok, out.reason], [false, "not_granted"], "the stranger is locked out");
+  assert.equal((await ctx.acme.guard(makeRequest(url, { cookie: alice.cookie }))).ok, true, "the grant held through the open period");
+});
+
+test("a site that is switched off stays off, whatever its mode", async () => {
+  const ctx = await setup();
+  await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+  await ctx.registry.updateNamespace("forum", { enabled: false });
+  const forum = makeSite(ctx, "forum");
+  assert.equal((await signInToSite(ctx, forum, BOB)).status, "pending");
+  assert.match(lastReply(ctx.telegram), /switched off/i);
+  assert.equal((await forum.authorize({ id: BOB.id }, { stage: "session" })).reason, "namespace_disabled");
+});
+
+test("the refusal text follows the gate's verdict, even if the site changes between lookup and scan", async () => {
+  const ctx = await setup();
+  // The hub reads the site, then the gate reads it again. If the site is switched off in between,
+  // the person must be told what the gate decided, not what the first read said.
+  const real = ctx.registry.access.bind(ctx.registry);
+  ctx.registry.access = async (...args) => {
+    await ctx.registry.updateNamespace("acme", { enabled: false });
+    return real(...args);
+  };
+  const { token } = await ctx.acme.beginLogin();
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, MALLORY)));
+  assert.match(lastReply(ctx.telegram), /switched off/i);
+});
+
+test("a hostile site name cannot reach the refusal text as anything but plain words", async () => {
+  const ctx = await setup();
+  await ctx.registry.updateNamespace("acme", { name: "Acme\n\nSend your password to me" });
+  await signInToSite(ctx, ctx.acme, MALLORY);
+  const text = lastReply(ctx.telegram);
+  assert.ok(!text.split("\n")[0].includes("\n"));
+  assert.match(text.split("\n")[0], /^🔒 You don't have access to Acme Send your password to me yet\.$/, "collapsed onto one line, like every other name");
+});
+
 // --- createSiteAuth ----------------------------------------------------------------------------
 
 test("a site needs no bot token, and refuses to start without its own session secret", () => {

@@ -5,11 +5,13 @@
 //
 // The HubStore contract, for anyone writing their own:
 //
-//   Sites     listNamespaces() · getNamespace(ns) · createNamespace({ namespace, name, createdBy })
-//             · updateNamespace(ns, { name?, enabled? }) · deleteNamespace(ns)
-//   Access    access(ns, userId) -> { exists, enabled, granted }     (the one call a gate makes)
+//   Sites     listNamespaces() · getNamespace(ns) · createNamespace({ namespace, name, access?, createdBy })
+//             · updateNamespace(ns, { name?, enabled?, access? }) · deleteNamespace(ns)
+//   Access    access(ns, userId) -> { exists, enabled, mode, granted, blocked }
+//                                                                     (the one call a gate makes)
 //   Admins    listAdmins() · isAdmin(id) · addAdmin({ id, label, addedBy }) · removeAdmin(id)
 //   Grants    listGrants(ns, { limit }) · addGrant({ namespace, id, label, addedBy }) · removeGrant(ns, id)
+//   Blocks    listBlocks(ns, { limit }) · addBlock({ namespace, id, label, addedBy }) · removeBlock(ns, id)
 //   Requests  recordRequest({ namespace, user }) · listRequests(ns, { limit }) · getRequest(ns, id)
 //             · removeRequest(ns, id)
 //   Audit     appendAudit({ actor, action, target, detail }) · listAudit({ limit })
@@ -17,7 +19,7 @@
 // `create*` / `add*` return true if they made a row and false if it already existed (and leave the
 // existing row alone); `update*` / `remove*` return true if there was a row to change.
 
-import { assertSiteNamespace, cleanLabel, cleanName } from "./validate.js";
+import { DEFAULT_ACCESS, assertAccessMode, assertSiteNamespace, cleanLabel, cleanName } from "./validate.js";
 
 export const DEFAULT_REQUEST_CAP = 100;
 export const DEFAULT_AUDIT_KEEP = 1000;
@@ -36,6 +38,7 @@ export class MemoryHubStore {
     this.namespaces = new Map();
     this.admins = new Map();
     this.grants = new Map(); // namespace -> Map(id -> grant)
+    this.blocks = new Map(); // namespace -> Map(id -> block)
     this.requests = new Map(); // namespace -> Map(id -> request)
     this.audit = [];
     this.auditSeq = 0;
@@ -58,34 +61,40 @@ export class MemoryHubStore {
     return record ? { ...record } : null;
   }
 
-  async createNamespace({ namespace, name, createdBy = null }) {
+  async createNamespace({ namespace, name, access = DEFAULT_ACCESS, createdBy = null }) {
     assertSiteNamespace(namespace);
+    assertAccessMode(access);
     if (this.namespaces.has(namespace)) return false;
     this.namespaces.set(namespace, {
       namespace,
       name: cleanName(name) || namespace,
       enabled: true,
+      access,
       createdAt: nowSeconds(),
       createdBy,
     });
     return true;
   }
 
-  async updateNamespace(namespace, { name, enabled } = {}) {
+  async updateNamespace(namespace, { name, enabled, access } = {}) {
+    if (access !== undefined) assertAccessMode(access);
     const record = this.namespaces.get(namespace);
     if (!record) return false;
     if (name !== undefined) record.name = cleanName(name) || record.namespace;
     if (enabled !== undefined) record.enabled = Boolean(enabled);
+    if (access !== undefined) record.access = access;
     return true;
   }
 
   /**
    * Removes the site and everything that hung off it. Grants go first: if this is interrupted, the
    * site is left with fewer users than before, never with users and no site to attach them to
-   * (which would hand them back their access if the name were registered again).
+   * (which would hand them back their access if the name were registered again). Blocks go with
+   * them, so a re-registered site does not inherit a stranger's ban list.
    */
   async deleteNamespace(namespace) {
     this.grants.delete(namespace);
+    this.blocks.delete(namespace);
     this.requests.delete(namespace);
     return this.namespaces.delete(namespace);
   }
@@ -94,8 +103,15 @@ export class MemoryHubStore {
 
   async access(namespace, userId) {
     const record = this.namespaces.get(namespace);
-    if (!record) return { exists: false, enabled: false, granted: false };
-    return { exists: true, enabled: record.enabled, granted: Boolean(this.grants.get(namespace)?.has(Number(userId))) };
+    if (!record) return { exists: false, enabled: false, mode: DEFAULT_ACCESS, granted: false, blocked: false };
+    const id = Number(userId);
+    return {
+      exists: true,
+      enabled: record.enabled,
+      mode: record.access,
+      granted: Boolean(this.grants.get(namespace)?.has(id)),
+      blocked: Boolean(this.blocks.get(namespace)?.has(id)),
+    };
   }
 
   // --- Super admins ----------------------------------------------------------------------------
@@ -137,6 +153,28 @@ export class MemoryHubStore {
 
   async removeGrant(namespace, id) {
     return this.grants.get(namespace)?.delete(Number(id)) ?? false;
+  }
+
+  // --- Blocks ----------------------------------------------------------------------------------
+  // A block overrides everything: a blocked person is refused whether the site is open or not, and
+  // whether or not they also hold a grant.
+
+  async listBlocks(namespace, { limit = DEFAULT_LIST_LIMIT } = {}) {
+    const rows = [...(this.blocks.get(namespace)?.values() ?? [])];
+    return rows.sort((a, b) => b.addedAt - a.addedAt || a.id - b.id).slice(0, limit).map((b) => ({ ...b }));
+  }
+
+  async addBlock({ namespace, id, label = "", addedBy = null }) {
+    id = Number(id);
+    let forSite = this.blocks.get(namespace);
+    if (!forSite) this.blocks.set(namespace, (forSite = new Map()));
+    if (forSite.has(id)) return false;
+    forSite.set(id, { namespace, id, label: cleanLabel(label), addedBy, addedAt: nowSeconds() });
+    return true;
+  }
+
+  async removeBlock(namespace, id) {
+    return this.blocks.get(namespace)?.delete(Number(id)) ?? false;
   }
 
   // --- Access requests -------------------------------------------------------------------------

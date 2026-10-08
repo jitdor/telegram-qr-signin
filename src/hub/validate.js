@@ -13,6 +13,21 @@ export const ADMIN_NAMESPACE = "hub-admin";
 export const MAX_LABEL_LENGTH = 80;
 export const MAX_NAME_LENGTH = 60;
 
+/**
+ * Who a site lets in.
+ *   "granted"  only people holding a grant (the default, and what every new site starts as)
+ *   "anyone"   any Telegram account that is not blocked — the hub proves who someone is, and the
+ *              site decides what they may do
+ */
+export const ACCESS_MODES = ["granted", "anyone"];
+export const DEFAULT_ACCESS = "granted";
+
+/** Throws unless `mode` is one of ACCESS_MODES. */
+export function assertAccessMode(mode) {
+  if (!ACCESS_MODES.includes(mode)) throw new Error(`access must be one of ${ACCESS_MODES.join(", ")}`);
+  return mode;
+}
+
 /** Throws unless `namespace` is something a site may be registered under. */
 export function assertSiteNamespace(namespace) {
   if (typeof namespace !== "string" || !NAMESPACE_RE.test(namespace)) {

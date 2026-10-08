@@ -61,18 +61,95 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
   t("access reports unknown, disabled, granted and not granted apart", async (make) => {
     const store = make();
-    assert.deepEqual(await store.access("acme", 111), { exists: false, enabled: false, granted: false });
+    assert.deepEqual(await store.access("acme", 111), { exists: false, enabled: false, mode: "granted", granted: false, blocked: false });
 
     await store.createNamespace({ namespace: "acme", name: "Acme" });
-    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, granted: false });
+    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", granted: false, blocked: false });
 
     await store.addGrant({ namespace: "acme", id: 111 });
-    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, granted: true });
+    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", granted: true, blocked: false });
     assert.equal((await store.access("acme", 222)).granted, false);
     assert.equal((await store.access("other", 111)).granted, false, "a grant is per site");
 
     await store.updateNamespace("acme", { enabled: false });
-    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: false, granted: true });
+    assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: false, mode: "granted", granted: true, blocked: false });
+  });
+
+  t("a site starts as approved-people-only, can be created open, and switches both ways", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "forum", name: "Forum", access: "anyone" });
+    assert.equal((await store.getNamespace("acme")).access, "granted");
+    assert.equal((await store.getNamespace("forum")).access, "anyone");
+
+    assert.equal(await store.updateNamespace("acme", { access: "anyone" }), true);
+    assert.equal((await store.access("acme", 5)).mode, "anyone");
+    assert.equal((await store.listNamespaces()).find((s) => s.namespace === "acme").access, "anyone");
+    await store.updateNamespace("acme", { access: "granted" });
+    assert.equal((await store.access("acme", 5)).mode, "granted");
+  });
+
+  t("an access mode that does not exist is refused, and refusing it changes nothing", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    for (const bad of ["open", "ANYONE", "", null, 1, {}]) {
+      await assert.rejects(store.updateNamespace("acme", { access: bad }), /access must be/, String(bad));
+    }
+    await assert.rejects(store.createNamespace({ namespace: "x", name: "x", access: "public" }), /access must be/);
+    assert.equal((await store.getNamespace("acme")).access, "granted");
+    assert.equal(await store.getNamespace("x"), null);
+  });
+
+  t("switching access leaves the grants alone, so switching back restores them", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.addGrant({ namespace: "acme", id: 111 });
+    await store.updateNamespace("acme", { access: "anyone" });
+    assert.equal((await store.access("acme", 111)).granted, true, "the grant is still there while the site is open");
+    await store.updateNamespace("acme", { access: "granted" });
+    assert.equal((await store.access("acme", 111)).granted, true);
+    assert.equal((await store.listGrants("acme")).length, 1);
+  });
+
+  t("blocks add once, remove once, list newest first, and apply per site", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.createNamespace({ namespace: "forum", name: "Forum", access: "anyone" });
+    assert.equal(await store.addBlock({ namespace: "forum", id: 9, label: "spam", addedBy: 1 }), true);
+    assert.equal(await store.addBlock({ namespace: "forum", id: 9, label: "again" }), false);
+    await store.addBlock({ namespace: "forum", id: 8 });
+
+    const blocks = await store.listBlocks("forum");
+    assert.deepEqual(blocks.map((b) => b.id).sort(), [8, 9]);
+    const nine = blocks.find((b) => b.id === 9);
+    assert.deepEqual([nine.label, nine.addedBy], ["spam", 1], "re-adding does not rewrite the existing block");
+
+    assert.equal((await store.access("forum", 9)).blocked, true);
+    assert.equal((await store.access("forum", 7)).blocked, false);
+    assert.equal((await store.access("acme", 9)).blocked, false, "a block is per site");
+    assert.deepEqual(await store.listBlocks("acme"), []);
+
+    assert.equal(await store.removeBlock("forum", 9), true);
+    assert.equal(await store.removeBlock("forum", 9), false);
+    assert.equal((await store.access("forum", 9)).blocked, false);
+    assert.equal((await store.listBlocks("forum", { limit: 1 })).length, 1);
+  });
+
+  t("a block and a grant can coexist; the block is reported alongside, not instead", async (make) => {
+    const store = make();
+    await store.createNamespace({ namespace: "acme", name: "Acme" });
+    await store.addGrant({ namespace: "acme", id: 5 });
+    await store.addBlock({ namespace: "acme", id: 5 });
+    const state = await store.access("acme", 5);
+    assert.deepEqual([state.granted, state.blocked], [true, true]);
+  });
+
+  t("block notes are cleaned and capped like every other label", async (make) => {
+    const store = make();
+    await store.addBlock({ namespace: "acme", id: 5, label: `x\n\ty${"z".repeat(200)}` });
+    const [block] = await store.listBlocks("acme");
+    assert.ok(block.label.startsWith("x y"));
+    assert.ok(block.label.length <= 80);
   });
 
   t("ids beyond 32 bits survive a round trip", async (make) => {
@@ -120,6 +197,8 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
     await store.createNamespace({ namespace: "keep", name: "Keep" });
     await store.addGrant({ namespace: "acme", id: 1 });
     await store.addGrant({ namespace: "keep", id: 1 });
+    await store.addBlock({ namespace: "acme", id: 3 });
+    await store.addBlock({ namespace: "keep", id: 3 });
     await store.recordRequest({ namespace: "acme", user: { id: 2, first_name: "B" } });
 
     assert.equal(await store.deleteNamespace("acme"), true);
@@ -128,8 +207,10 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
 
     await store.createNamespace({ namespace: "acme", name: "Acme again" });
     assert.deepEqual(await store.listGrants("acme"), []);
+    assert.deepEqual(await store.listBlocks("acme"), [], "a re-registered site does not inherit the old ban list");
     assert.deepEqual(await store.listRequests("acme"), []);
     assert.equal((await store.access("keep", 1)).granted, true, "other sites are untouched");
+    assert.equal((await store.access("keep", 3)).blocked, true);
   });
 
   t("listing sites reports user and request counts, ordered by name", async (make) => {
@@ -202,11 +283,53 @@ test("D1HubStore honours a custom prefix", async () => {
   const db = makeFakeD1({ sql: "hub-d1.sql" });
   db.sqlite.exec(`ALTER TABLE hub_namespaces RENAME TO site_namespaces;
                   ALTER TABLE hub_grants RENAME TO site_grants;
+                  ALTER TABLE hub_blocks RENAME TO site_blocks;
                   ALTER TABLE hub_requests RENAME TO site_requests;
                   ALTER TABLE hub_admins RENAME TO site_admins;
                   ALTER TABLE hub_audit RENAME TO site_audit;`);
   const store = new D1HubStore(db, { prefix: "site_" });
   await store.createNamespace({ namespace: "acme", name: "Acme" });
   await store.addGrant({ namespace: "acme", id: 1 });
+  await store.addBlock({ namespace: "acme", id: 2 });
   assert.equal((await store.access("acme", 1)).granted, true);
+  assert.equal((await store.access("acme", 2)).blocked, true);
+});
+
+// The hub schema as first released: no `access` column, no hub_blocks table.
+const SCHEMA_BEFORE_OPEN_ACCESS = `
+  CREATE TABLE hub_namespaces (namespace TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, created_by INTEGER);
+  CREATE TABLE hub_admins (telegram_id INTEGER PRIMARY KEY, label TEXT NOT NULL DEFAULT '', added_by INTEGER, added_at INTEGER NOT NULL);
+  CREATE TABLE hub_grants (namespace TEXT NOT NULL, telegram_id INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '', added_by INTEGER, added_at INTEGER NOT NULL, PRIMARY KEY (namespace, telegram_id));
+  CREATE TABLE hub_requests (namespace TEXT NOT NULL, telegram_id INTEGER NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (namespace, telegram_id));
+  CREATE TABLE hub_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor INTEGER, action TEXT NOT NULL, target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+`;
+
+test("the upgrade script brings a database from before open access up to date without changing anyone's access", async () => {
+  const { readFileSync } = await import("node:fs");
+  const upgrade = readFileSync(new URL("../migrations/hub-d1-upgrade-access.sql", import.meta.url), "utf8");
+
+  const db = makeFakeD1({ schema: SCHEMA_BEFORE_OPEN_ACCESS });
+  db.sqlite.exec(`INSERT INTO hub_namespaces VALUES ('acme', 'Acme', 1, 100, 1);
+                  INSERT INTO hub_namespaces VALUES ('off', 'Off', 0, 100, 1);
+                  INSERT INTO hub_grants VALUES ('acme', 111, 'Alice', 1, 100);`);
+
+  db.sqlite.exec(upgrade);
+  const store = new D1HubStore(db);
+
+  assert.deepEqual(await store.access("acme", 111), { exists: true, enabled: true, mode: "granted", granted: true, blocked: false });
+  assert.deepEqual(await store.access("acme", 222), { exists: true, enabled: true, mode: "granted", granted: false, blocked: false });
+  assert.equal((await store.getNamespace("off")).enabled, false, "a switched-off site stays off");
+  assert.deepEqual((await store.listNamespaces()).map((s) => [s.namespace, s.access, s.users]), [["acme", "granted", 1], ["off", "granted", 0]]);
+
+  // The new features work on the upgraded database.
+  await store.updateNamespace("acme", { access: "anyone" });
+  await store.addBlock({ namespace: "acme", id: 9 });
+  assert.deepEqual([(await store.access("acme", 9)).mode, (await store.access("acme", 9)).blocked], ["anyone", true]);
+
+  assert.throws(() => db.sqlite.exec(upgrade), /duplicate column/, "a second run fails loudly instead of half-applying");
+});
+
+test("the database refuses an access value the code never writes", () => {
+  const db = makeFakeD1({ sql: "hub-d1.sql" });
+  assert.throws(() => db.sqlite.exec("INSERT INTO hub_namespaces (namespace, name, access, created_at) VALUES ('x', 'x', 'public', 1)"), /CHECK/);
 });

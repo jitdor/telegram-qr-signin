@@ -2,11 +2,20 @@
 
 import type { Gate, LoginStore, TelegramApi, TelegramQrAuth, TelegramQrAuthConfig, Branding, AuthUser } from "./index";
 
+/**
+ * Who a site lets in.
+ *  - `"granted"`: only people holding a grant (the default).
+ *  - `"anyone"`: any Telegram account that is not blocked. The hub only proves who someone is; the
+ *    site keeps its own accounts and does its own moderation.
+ */
+export type HubAccessMode = "granted" | "anyone";
+
 export interface HubNamespace {
   namespace: string;
   /** What people see in the bot chat and the console. */
   name: string;
   enabled: boolean;
+  access: HubAccessMode;
   createdAt: number;
   createdBy: number | null;
 }
@@ -26,6 +35,14 @@ export interface HubAdmin {
 }
 
 export interface HubGrant {
+  namespace: string;
+  id: number;
+  label: string;
+  addedBy: number | null;
+  addedAt: number;
+}
+
+export interface HubBlock {
   namespace: string;
   id: number;
   label: string;
@@ -56,15 +73,20 @@ export interface HubAuditEntry {
 export interface HubAccess {
   exists: boolean;
   enabled: boolean;
+  /** The site's access mode. */
+  mode: HubAccessMode;
   granted: boolean;
+  /** On the site's block list. Beats `granted`, and applies in every mode. */
+  blocked: boolean;
 }
 
 /** The registry contract. `create*` / `add*` resolve true if they made a row, false if it existed. */
 export interface HubStore {
   listNamespaces(): Promise<HubNamespaceSummary[]>;
   getNamespace(namespace: string): Promise<HubNamespace | null>;
-  createNamespace(site: { namespace: string; name?: string; createdBy?: number | null }): Promise<boolean>;
-  updateNamespace(namespace: string, changes: { name?: string; enabled?: boolean }): Promise<boolean>;
+  createNamespace(site: { namespace: string; name?: string; access?: HubAccessMode; createdBy?: number | null }): Promise<boolean>;
+  updateNamespace(namespace: string, changes: { name?: string; enabled?: boolean; access?: HubAccessMode }): Promise<boolean>;
+  /** Also removes the site's grants, blocks and requests. */
   deleteNamespace(namespace: string): Promise<boolean>;
 
   /** The one call a gate makes: one query per guarded request. */
@@ -78,6 +100,10 @@ export interface HubStore {
   listGrants(namespace: string, options?: { limit?: number }): Promise<HubGrant[]>;
   addGrant(grant: { namespace: string; id: number; label?: string; addedBy?: number | null }): Promise<boolean>;
   removeGrant(namespace: string, id: number | string): Promise<boolean>;
+
+  listBlocks(namespace: string, options?: { limit?: number }): Promise<HubBlock[]>;
+  addBlock(block: { namespace: string; id: number; label?: string; addedBy?: number | null }): Promise<boolean>;
+  removeBlock(namespace: string, id: number | string): Promise<boolean>;
 
   recordRequest(request: { namespace: string; user: Pick<AuthUser, "id"> & Partial<AuthUser> }): Promise<void>;
   listRequests(namespace: string, options?: { limit?: number }): Promise<HubRequest[]>;

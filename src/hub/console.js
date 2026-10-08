@@ -18,6 +18,7 @@
 import { escapeHtml as esc } from "../login-page.js";
 import { hmacSha256, toHex, timingSafeEqualHex } from "../crypto.js";
 import {
+  ACCESS_MODES,
   NAMESPACE_RE,
   assertSiteNamespace,
   cleanLabel,
@@ -39,6 +40,12 @@ const OK_MESSAGES = {
   grant_removed: "Access revoked. It applies on their next request.",
   request_approved: "Approved. They can sign in now.",
   request_dismissed: "Request dismissed.",
+  request_blocked: "Blocked, and the request removed.",
+  access_open: "This site is now open to anyone with a Telegram account, except people you block.",
+  access_granted: "This site now requires approval. People without a grant are locked out on their next request.",
+  blocks_added: (n) => `Blocked ${n} ${n === 1 ? "person" : "people"}. It applies on their next request.`,
+  blocks_none: "Everyone listed was already blocked.",
+  block_removed: "Unblocked.",
   admin_added: "Super admin added.",
   admin_removed: "Super admin removed.",
 };
@@ -58,6 +65,8 @@ const ERR_MESSAGES = {
   admin_self: "You cannot remove yourself. Ask another super admin.",
   admin_missing: "That super admin no longer exists.",
   confirm_mismatch: "The confirmation did not match, so nothing was deleted.",
+  confirm_open: "To open a site to everyone, type its id in the box to confirm. Nothing was changed.",
+  bad_mode: "That is not a valid setting.",
   bad_request: "That request could not be processed. Reload the page and try again.",
   failed: "Something went wrong and the change may not have been saved. Check the logs.",
 };
@@ -141,7 +150,10 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
       if (c === "delete" && rest.length === 3) return deleteSite(ctx, b);
       if (c === "grants" && rest.length === 3) return addGrants(ctx, b);
       if (c === "grants" && e === "remove" && rest.length === 5) return removeGrant(ctx, b, d);
-      if (c === "requests" && (e === "approve" || e === "dismiss") && rest.length === 5) return answerRequest(ctx, b, d, e);
+      if (c === "access" && rest.length === 3) return setAccess(ctx, b);
+      if (c === "blocks" && rest.length === 3) return addBlocks(ctx, b);
+      if (c === "blocks" && e === "remove" && rest.length === 5) return removeBlock(ctx, b, d);
+      if (c === "requests" && (e === "approve" || e === "dismiss" || e === "block") && rest.length === 5) return answerRequest(ctx, b, d, e);
     }
     if (a === "admins" && rest.length === 1) return addAdmin(ctx);
     if (a === "admins" && c === "remove" && rest.length === 3) return removeAdmin(ctx, b);
@@ -195,8 +207,8 @@ ${flash(ctx.url)}
       <td><a href="${adminPath}/ns/${esc(s.namespace)}">${esc(s.name)}</a></td>
       <td><code>${esc(s.namespace)}</code></td>
       <td>${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}</td>
-      <td class="num">${s.users}</td>
-      <td class="num">${s.requests ? `<span class="pill warn">${s.requests}</span>` : "0"}</td>
+      <td class="num">${s.access === "anyone" ? '<span class="pill warn">Anyone</span>' : s.users}</td>
+      <td class="num">${s.access === "anyone" ? "—" : s.requests ? `<span class="pill warn">${s.requests}</span>` : "0"}</td>
       <td class="act"><a class="btn quiet" href="${adminPath}/ns/${esc(s.namespace)}">Manage</a></td>
     </tr>`
       )
@@ -249,7 +261,12 @@ ${flash(ctx.url)}
   async function sitePage(ctx, namespace) {
     const site = await registry.getNamespace(namespace);
     if (!site) return page("Not found", `<p class="empty">That site does not exist. <a href="${adminPath}">Back to all sites</a>.</p>`, ctx, 404);
-    const [grants, requests] = await Promise.all([registry.listGrants(namespace), registry.listRequests(namespace)]);
+    const open = site.access === "anyone";
+    const [grants, blocks, requests] = await Promise.all([
+      registry.listGrants(namespace),
+      registry.listBlocks(namespace),
+      open ? [] : registry.listRequests(namespace), // an open site has nobody to approve
+    ]);
     const base = `${adminPath}/ns/${namespace}`; // namespace already matched NAMESPACE_RE
 
     const body = `
@@ -268,10 +285,41 @@ ${flash(ctx.url)}
 </section>
 
 ${
+  open
+    ? `<section class="warn-zone">
+  <h2>Who can sign in <span class="pill warn">Anyone with Telegram</span></h2>
+  <p class="lead">Any Telegram account can sign in to this site unless it is blocked below. This site is responsible for its own accounts and moderation: the hub only proves who someone is.</p>
+  ${postForm(ctx, `${base}/access`, `
+    <input type="hidden" name="mode" value="granted">
+    <div class="row"><button class="btn primary">Require approval again</button></div>
+    <p class="hint">People without a grant are locked out on their next request. Grants made earlier are still there.</p>`)}
+</section>`
+    : `<section>
+  <h2>Who can sign in <span class="pill">Approved people only</span></h2>
+  <p class="lead">Only the people you grant access to below can sign in to this site.</p>
+  <div class="callout">
+    <strong>Open this site to anyone with a Telegram account</strong>
+    <p class="hint">For public sites such as a forum. Before you do:</p>
+    <ul class="hint">
+      <li>Anyone can sign in. The grant list below stops being used (it is kept, in case you switch back).</li>
+      <li>The hub only proves who someone is. The site must keep its own accounts, keyed on the Telegram id, and do its own moderation and rate limiting.</li>
+      <li>You can still block individual people.</li>
+    </ul>
+    ${postForm(ctx, `${base}/access`, `
+      <input type="hidden" name="mode" value="anyone">
+      <div class="row">
+        <label><span>Type <code>${esc(namespace)}</code> to confirm</span><input name="confirm" required autocomplete="off" spellcheck="false"></label>
+        <button class="btn danger">Open to anyone</button>
+      </div>`)}
+  </div>
+</section>`
+}
+
+${
   requests.length
     ? `<section>
   <h2>Waiting for approval <span class="pill warn">${requests.length}</span></h2>
-  <p class="lead">These people scanned this site's QR code and were turned away. Approve to grant access; dismiss to forget the request.</p>
+  <p class="lead">These people scanned this site's QR code and were turned away. Approve to grant access, dismiss to forget the request, or block to refuse them for good.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Person</th><th>Telegram id</th><th class="num">Tries</th><th>Last seen</th><th></th></tr></thead>
     <tbody>${requests
@@ -285,6 +333,7 @@ ${
       <td class="act">
         ${postForm(ctx, `${base}/requests/${r.id}/approve`, '<button class="btn primary">Approve</button>', "inline")}
         ${postForm(ctx, `${base}/requests/${r.id}/dismiss`, '<button class="btn quiet">Dismiss</button>', "inline")}
+        ${postForm(ctx, `${base}/requests/${r.id}/block`, '<button class="btn danger">Block</button>', "inline")}
       </td></tr>`;
       })
       .join("")}</tbody></table></div>
@@ -294,13 +343,14 @@ ${
 
 <section>
   <h2>People with access <span class="count">${grants.length}${grants.length >= 500 ? "+" : ""}</span></h2>
+  ${open ? '<p class="lead">Not used while this site is open to anyone. Kept in case you require approval again.</p>' : ""}
   ${postForm(ctx, `${base}/grants`, `
     <div class="row">
       <label class="grow">Telegram user ids<textarea name="ids" rows="2" required placeholder="123456789, 987654321" spellcheck="false"></textarea></label>
       <label>Note (optional)<input name="label" maxlength="80" placeholder="e.g. Finance team" autocomplete="off"></label>
       <button class="btn primary">Grant access</button>
     </div>
-    <p class="hint">Separate ids with commas, spaces or new lines. If you do not know someone's id, ask them to scan this site's QR code: they will appear under <em>Waiting for approval</em>.</p>`)}
+    <p class="hint">Separate ids with commas, spaces or new lines.${open ? "" : " If you do not know someone's id, ask them to scan this site's QR code: they will appear under <em>Waiting for approval</em>."}</p>`)}
   ${
     grants.length
       ? `<div class="table-wrap"><table>
@@ -319,9 +369,37 @@ ${
   }
 </section>
 
+<section>
+  <h2>Blocked people <span class="count">${blocks.length}${blocks.length >= 500 ? "+" : ""}</span></h2>
+  <p class="lead">Refused by this site whatever else is true of them: even with a grant, and even while the site is open to anyone. It applies on their next request.</p>
+  ${postForm(ctx, `${base}/blocks`, `
+    <div class="row">
+      <label class="grow">Telegram user ids<textarea name="ids" rows="2" required placeholder="123456789" spellcheck="false"></textarea></label>
+      <label>Note (optional)<input name="label" maxlength="80" placeholder="e.g. spam" autocomplete="off"></label>
+      <button class="btn danger">Block</button>
+    </div>
+    ${open ? '<p class="hint">On an open site the hub never sees who is signed up. The site knows its own members\' Telegram ids: take the id from the member you are banning.</p>' : ""}`)}
+  ${
+    blocks.length
+      ? `<div class="table-wrap"><table>
+    <thead><tr><th>Telegram id</th><th>Note</th><th>Blocked</th><th></th></tr></thead>
+    <tbody>${blocks
+      .map(
+        (b) => `<tr>
+      <td><code>${b.id}</code></td>
+      <td>${esc(b.label)}</td>
+      <td>${when(b.addedAt)}${b.addedBy ? ` by <code>${b.addedBy}</code>` : ""}</td>
+      <td class="act">${postForm(ctx, `${base}/blocks/${b.id}/remove`, '<button class="btn quiet">Unblock</button>', "inline")}</td>
+    </tr>`
+      )
+      .join("")}</tbody></table></div>`
+      : '<p class="empty">Nobody is blocked.</p>'
+  }
+</section>
+
 <section class="danger-zone">
   <h2>Delete this site</h2>
-  <p class="lead">Removes the site and everyone's access to it. The site's Worker will refuse every sign-in until you add the namespace again.</p>
+  <p class="lead">Removes the site, its grants and its block list. The site's Worker will refuse every sign-in until you add the namespace again.</p>
   ${postForm(ctx, `${base}/delete`, `
     <div class="row">
       <label><span>Type <code>${esc(namespace)}</code> to confirm</span><input name="confirm" required autocomplete="off" spellcheck="false"></label>
@@ -362,6 +440,24 @@ ${
     return redirect(`${adminPath}/ns/${namespace}`, { ok: "site_saved" });
   }
 
+  async function setAccess({ form, session }, namespace) {
+    const before = await registry.getNamespace(namespace);
+    if (!before) return redirect(adminPath, { err: "site_missing" });
+    const back = `${adminPath}/ns/${namespace}`;
+    const mode = String(form.get("mode") ?? "");
+    if (!ACCESS_MODES.includes(mode)) return redirect(back, { err: "bad_mode" });
+    if (mode === before.access) return redirect(back);
+
+    // Widening access to the whole world is the one change here that cannot be walked back for the
+    // people who sign in meanwhile, so it takes a deliberate act. Narrowing again needs none.
+    if (mode === "anyone" && String(form.get("confirm") ?? "").trim() !== namespace) {
+      return redirect(back, { err: "confirm_open" });
+    }
+    await registry.updateNamespace(namespace, { access: mode });
+    await audit(session, "site.access", namespace, `${before.access} -> ${mode}`);
+    return redirect(back, { ok: mode === "anyone" ? "access_open" : "access_granted" });
+  }
+
   async function deleteSite({ form, session }, namespace) {
     const site = await registry.getNamespace(namespace);
     if (!site) return redirect(adminPath, { err: "site_missing" });
@@ -392,6 +488,35 @@ ${
     return redirect(back, { ok: "grants_added", n: added.length });
   }
 
+  async function addBlocks({ form, session }, namespace) {
+    if (!(await registry.getNamespace(namespace))) return redirect(adminPath, { err: "site_missing" });
+    const back = `${adminPath}/ns/${namespace}`;
+    const { ids, invalid } = parseTelegramIds(form.get("ids"));
+    if (invalid.length) return redirect(back, { err: "bad_ids" });
+    if (!ids.length) return redirect(back, { err: "no_ids" });
+    if (ids.length > MAX_IDS_PER_SUBMIT) return redirect(back, { err: "too_many_ids" });
+
+    const label = cleanLabel(form.get("label"));
+    const added = [];
+    for (const id of ids) {
+      if (await registry.addBlock({ namespace, id, label, addedBy: Number(session.id) })) added.push(id);
+      // Someone being banned has no business in the approval queue. Their grant, if any, stays: the
+      // block outranks it, and unblocking them should not also silently erase their access.
+      await registry.removeRequest(namespace, id);
+    }
+    if (!added.length) return redirect(back, { ok: "blocks_none" });
+    await audit(session, "block.add", namespace, `${added.length}: ${added.join(", ")}`);
+    return redirect(back, { ok: "blocks_added", n: added.length });
+  }
+
+  async function removeBlock({ session }, namespace, idText) {
+    const id = parseTelegramId(idText);
+    const back = `${adminPath}/ns/${namespace}`;
+    if (id === null) return redirect(back, { err: "bad_id" });
+    if (await registry.removeBlock(namespace, id)) await audit(session, "block.remove", namespace, String(id));
+    return redirect(back, { ok: "block_removed" });
+  }
+
   async function removeGrant({ session }, namespace, idText) {
     const id = parseTelegramId(idText);
     const back = `${adminPath}/ns/${namespace}`;
@@ -407,6 +532,13 @@ ${
     const request = await registry.getRequest(namespace, id);
     if (!request) return redirect(back, { err: "request_gone" });
 
+    if (verdict === "block") {
+      const note = describeUser({ first_name: request.firstName, last_name: request.lastName, username: request.username });
+      await registry.addBlock({ namespace, id, label: note, addedBy: Number(session.id) });
+      await registry.removeRequest(namespace, id);
+      await audit(session, "block.add", namespace, `${id} (from request)`);
+      return redirect(back, { ok: "request_blocked" });
+    }
     if (verdict === "dismiss") {
       await registry.removeRequest(namespace, id);
       await audit(session, "request.dismiss", namespace, String(id));
@@ -571,6 +703,10 @@ input:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{
 .flash{margin:0 0 16px;padding:11px 14px;border-radius:10px;font-size:.92rem}
 .flash.good{background:var(--good-bg);color:var(--good)}
 .flash.bad{background:var(--bad-bg);color:var(--bad)}
+.warn-zone{border-color:color-mix(in srgb,var(--warn) 45%,var(--rule));background:color-mix(in srgb,var(--warn-bg) 35%,var(--card))}
+.callout{border:1px dashed var(--rule);border-radius:12px;padding:14px 16px}
+.callout strong{display:block;margin-bottom:2px}
+.callout ul{margin:4px 0 12px;padding-left:1.2rem}
 .danger-zone{border-color:color-mix(in srgb,var(--bad) 35%,var(--rule))}
 @media (max-width:560px){input[type=text],input:not([type]){min-width:0}.row>label{flex:1 1 100%}}
 `;

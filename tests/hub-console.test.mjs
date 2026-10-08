@@ -530,3 +530,202 @@ test("signing out clears the console cookie", async () => {
   assert.equal(response.status, 302);
   assert.match(response.headers.get("Set-Cookie"), /hub_admin_session=;.*Max-Age=0/);
 });
+
+// --- Open access and blocks --------------------------------------------------------------------
+
+async function withSite(ctx = null) {
+  ctx ??= await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "forum", name: "The forum" }, { cookie: ctx.cookie });
+  return ctx;
+}
+const sitePageHtml = async (ctx, ns = "forum") => (await get(ctx.hub, `/admin/ns/${ns}`, ctx.cookie)).text();
+
+test("a new site needs approval, and nothing at creation can make it open", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "forum", name: "The forum", access: "anyone" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
+
+  const html = await sitePageHtml(ctx);
+  assert.match(html, /Approved people only/);
+  assert.match(html, /Open this site to anyone with a Telegram account/);
+  assert.match(html, /keep its own accounts/i, "the responsibility shift is stated before the button");
+});
+
+test("the ordinary save form cannot change the access mode", async () => {
+  const ctx = await withSite();
+  await post(ctx.hub, "/admin/ns/forum/update", { name: "The forum", enabled: "1", access: "anyone" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
+});
+
+test("opening a site to everyone needs the id typed back; nothing changes without it", async () => {
+  const ctx = await withSite();
+  for (const confirm of [undefined, "", "FORUM", "other", "forum-2"]) {
+    const response = await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", ...(confirm === undefined ? {} : { confirm }) }, { cookie: ctx.cookie });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "confirm_open", JSON.stringify(confirm));
+  }
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
+  assert.deepEqual((await ctx.registry.listAudit()).filter((e) => e.action === "site.access"), [], "refused attempts are not logged as changes");
+
+  const done = await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
+  const { html } = await follow(ctx, done);
+  assert.match(html, /now open to anyone with a Telegram account/);
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "anyone");
+  const entry = (await ctx.registry.listAudit())[0];
+  assert.deepEqual([entry.actor, entry.action, entry.target, entry.detail], [ROOT.id, "site.access", "forum", "granted -> anyone"]);
+});
+
+test("stray whitespace around the typed id is forgiven, as it is when deleting a site", async () => {
+  const ctx = await withSite();
+  const response = await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "  forum " }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(response).searchParams.get("ok"), "access_open");
+});
+
+test("an open site says so, hides the approval queue, and keeps the grant list for later", async () => {
+  const ctx = await withSite();
+  await ctx.registry.addGrant({ namespace: "forum", id: ALICE.id, label: "Alice" });
+  await ctx.registry.recordRequest({ namespace: "forum", user: MALLORY });
+  assert.match(await sitePageHtml(ctx), /Waiting for approval/);
+
+  await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
+  const html = await sitePageHtml(ctx);
+  assert.match(html, /Anyone with Telegram/);
+  assert.match(html, /responsible for its own accounts/);
+  assert.doesNotMatch(html, /Waiting for approval/, "nobody to approve on an open site");
+  assert.match(html, /Not used while this site is open to anyone/);
+  assert.match(html, /Alice/, "the grants are still listed");
+  assert.match(html, /Require approval again/);
+  assert.doesNotMatch(html, /Open to anyone<\/button>/, "no second open button");
+  assert.match(html, /never sees who is signed up/, "the hint about finding ids to block");
+});
+
+test("the dashboard shows an open site as open instead of as a head count", async () => {
+  const ctx = await withSite();
+  await ctx.registry.addGrant({ namespace: "forum", id: 1 });
+  await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
+  const html = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
+  assert.match(html, /<span class="pill warn">Anyone<\/span>/);
+});
+
+test("requiring approval again needs no confirmation, is audited, and locks out people without a grant", async () => {
+  const ctx = await withSite();
+  await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.access("forum", MALLORY.id)).mode, "anyone");
+
+  const back = await post(ctx.hub, "/admin/ns/forum/access", { mode: "granted" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(back).searchParams.get("ok"), "access_granted");
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
+  assert.deepEqual((await ctx.registry.listAudit()).slice(0, 2).map((e) => e.detail), ["anyone -> granted", "granted -> anyone"]);
+});
+
+test("setting the mode a site already has changes and logs nothing; junk modes and missing sites are refused", async () => {
+  const ctx = await withSite();
+  const before = (await ctx.registry.listAudit()).length;
+  const same = await post(ctx.hub, "/admin/ns/forum/access", { mode: "granted" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(same).search, "");
+  assert.equal((await ctx.registry.listAudit()).length, before);
+
+  for (const mode of ["open", "ANYONE", "", "true"]) {
+    const response = await post(ctx.hub, "/admin/ns/forum/access", { mode, confirm: "forum" }, { cookie: ctx.cookie });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "bad_mode", JSON.stringify(mode));
+  }
+  const noMode = await post(ctx.hub, "/admin/ns/forum/access", { confirm: "forum" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(noMode).searchParams.get("err"), "bad_mode");
+  const ghost = await post(ctx.hub, "/admin/ns/ghost/access", { mode: "anyone", confirm: "ghost" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(ghost).searchParams.get("err"), "site_missing");
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
+});
+
+test("changing the access mode is protected by the same CSRF and origin checks as everything else", async () => {
+  const ctx = await withSite();
+  const noToken = await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie, csrf: "nope" });
+  assert.equal(redirectTarget(noToken).searchParams.get("err"), "bad_request");
+  const crossOrigin = await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie, origin: "https://evil.example" });
+  assert.equal(redirectTarget(crossOrigin).searchParams.get("err"), "bad_request");
+  assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
+});
+
+test("blocking takes a list, is all-or-nothing, is capped, and is audited", async () => {
+  const ctx = await withSite();
+  const ok = await post(ctx.hub, "/admin/ns/forum/blocks", { ids: "9, 8\n9", label: "spam" }, { cookie: ctx.cookie });
+  const { target, html } = await follow(ctx, ok);
+  assert.deepEqual([target.searchParams.get("ok"), target.searchParams.get("n")], ["blocks_added", "2"]);
+  assert.match(html, /Blocked 2 people/);
+  const blocks = await ctx.registry.listBlocks("forum");
+  assert.ok(blocks.every((b) => b.label === "spam" && b.addedBy === ROOT.id));
+  assert.deepEqual(blocks.map((b) => b.id).sort(), [8, 9]);
+  const entry = (await ctx.registry.listAudit())[0];
+  assert.deepEqual([entry.action, entry.target], ["block.add", "forum"]);
+  assert.match(entry.detail, /^2: /);
+
+  assert.equal(redirectTarget(await post(ctx.hub, "/admin/ns/forum/blocks", { ids: "8, 9" }, { cookie: ctx.cookie })).searchParams.get("ok"), "blocks_none");
+  for (const [ids, err] of [["7, abc", "bad_ids"], ["", "no_ids"], [Array.from({ length: 201 }, (_, n) => n + 1).join(","), "too_many_ids"]]) {
+    assert.equal(redirectTarget(await post(ctx.hub, "/admin/ns/forum/blocks", { ids }, { cookie: ctx.cookie })).searchParams.get("err"), err);
+  }
+  assert.equal((await ctx.registry.listBlocks("forum")).length, 2, "a bad list blocks nobody");
+});
+
+test("blocking someone clears their pending request but leaves their grant alone", async () => {
+  const ctx = await withSite();
+  await ctx.registry.addGrant({ namespace: "forum", id: ALICE.id });
+  await ctx.registry.recordRequest({ namespace: "forum", user: ALICE });
+  await ctx.registry.recordRequest({ namespace: "forum", user: BOB });
+
+  await post(ctx.hub, "/admin/ns/forum/blocks", { ids: String(ALICE.id) }, { cookie: ctx.cookie });
+  assert.deepEqual((await ctx.registry.listRequests("forum")).map((r) => r.id), [BOB.id]);
+  const state = await ctx.registry.access("forum", ALICE.id);
+  assert.deepEqual([state.granted, state.blocked], [true, true]);
+
+  await post(ctx.hub, `/admin/ns/forum/blocks/${ALICE.id}/remove`, {}, { cookie: ctx.cookie });
+  assert.equal((await ctx.registry.access("forum", ALICE.id)).granted, true, "unblocking does not erase an earlier grant");
+});
+
+test("unblocking is audited, and a bad id never reaches the registry", async () => {
+  const ctx = await withSite();
+  await ctx.registry.addBlock({ namespace: "forum", id: 9 });
+  const response = await post(ctx.hub, "/admin/ns/forum/blocks/9/remove", {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(response).searchParams.get("ok"), "block_removed");
+  assert.equal((await ctx.registry.access("forum", 9)).blocked, false);
+  assert.deepEqual((await ctx.registry.listAudit())[0].action, "block.remove");
+
+  const bad = await post(ctx.hub, "/admin/ns/forum/blocks/not-an-id/remove", {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(bad).searchParams.get("err"), "bad_id");
+  const again = await post(ctx.hub, "/admin/ns/forum/blocks/9/remove", {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(again).searchParams.get("ok"), "block_removed", "removing what is not there is not an error");
+  assert.equal((await ctx.registry.listAudit()).filter((e) => e.action === "block.remove").length, 1, "and is not logged twice");
+});
+
+test("a queued request can be blocked straight from the queue", async () => {
+  const ctx = await withSite();
+  await ctx.registry.recordRequest({ namespace: "forum", user: { ...MALLORY, last_name: "Doe" } });
+  assert.match(await sitePageHtml(ctx), />Block<\/button>/);
+
+  const response = await post(ctx.hub, `/admin/ns/forum/requests/${MALLORY.id}/block`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(response).searchParams.get("ok"), "request_blocked");
+  assert.equal(await ctx.registry.getRequest("forum", MALLORY.id), null);
+  const [block] = await ctx.registry.listBlocks("forum");
+  assert.deepEqual([block.id, block.label, block.addedBy], [MALLORY.id, "Mallory Doe (@mal)", ROOT.id]);
+  assert.equal((await ctx.registry.access("forum", MALLORY.id)).granted, false, "blocking grants nothing");
+
+  const gone = await post(ctx.hub, `/admin/ns/forum/requests/${MALLORY.id}/block`, {}, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(gone).searchParams.get("err"), "request_gone");
+});
+
+test("the blocked list is shown, escaped, and applies on open sites too", async () => {
+  const ctx = await withSite();
+  await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
+  const evil = `"><img src=x onerror=alert(1)>`;
+  await post(ctx.hub, "/admin/ns/forum/blocks", { ids: "9", label: evil }, { cookie: ctx.cookie });
+  const html = await sitePageHtml(ctx);
+  assert.match(html, /Blocked people <span class="count">1<\/span>/);
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, />Unblock<\/button>/);
+});
+
+test("deleting a site removes its block list, so a new site of the same name starts clean", async () => {
+  const ctx = await withSite();
+  await ctx.registry.addBlock({ namespace: "forum", id: 9 });
+  await post(ctx.hub, "/admin/ns/forum/delete", { confirm: "forum" }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/ns", { namespace: "forum", name: "Forum 2" }, { cookie: ctx.cookie });
+  assert.deepEqual(await ctx.registry.listBlocks("forum"), []);
+});

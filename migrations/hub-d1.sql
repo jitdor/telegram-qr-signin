@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS hub_namespaces (
   name TEXT NOT NULL,
   -- 0 shuts the site: nobody signs in, and sessions already open fail on their next request.
   enabled INTEGER NOT NULL DEFAULT 1,
+  -- Who gets in: 'granted' (only people holding a row in hub_grants) or 'anyone' (any Telegram
+  -- account not in hub_blocks). Grants are kept, not consulted, while a site is 'anyone', so
+  -- switching back restores them.
+  access TEXT NOT NULL DEFAULT 'granted' CHECK (access IN ('granted', 'anyone')),
   created_at INTEGER NOT NULL,
   created_by INTEGER
 );
@@ -36,6 +40,17 @@ CREATE TABLE IF NOT EXISTS hub_admins (
 -- Who may sign in to which site. Presence of a row IS the permission; revoking deletes the row,
 -- and the site's gate sees that on its very next request.
 CREATE TABLE IF NOT EXISTS hub_grants (
+  namespace TEXT NOT NULL,
+  telegram_id INTEGER NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  added_by INTEGER,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (namespace, telegram_id)
+);
+
+-- People refused by a site whatever else is true of them. A block beats a grant and applies to
+-- 'anyone' sites too, which is how a site that is open to everyone bans someone.
+CREATE TABLE IF NOT EXISTS hub_blocks (
   namespace TEXT NOT NULL,
   telegram_id INTEGER NOT NULL,
   label TEXT NOT NULL DEFAULT '',
@@ -70,4 +85,5 @@ CREATE TABLE IF NOT EXISTS hub_audit (
 
 -- Serves "which sites can this person use" and the per-site user list.
 CREATE INDEX IF NOT EXISTS idx_hub_grants_namespace ON hub_grants (namespace, added_at);
+CREATE INDEX IF NOT EXISTS idx_hub_blocks_namespace ON hub_blocks (namespace, added_at);
 CREATE INDEX IF NOT EXISTS idx_hub_requests_namespace ON hub_requests (namespace, last_seen);

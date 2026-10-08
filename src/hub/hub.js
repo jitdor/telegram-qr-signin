@@ -161,22 +161,41 @@ export function createHub(config) {
    * The per-scan auth the start handler needs. Built per update, so the site's current name and
    * state are always what the person sees, and nothing is cached that an admin's change could
    * leave stale. Construction is just closures — no I/O.
+   *
+   * The refusal message is chosen from what the gate actually decided, not from the site's state
+   * beforehand, so the reply cannot disagree with the verdict (a site switched off a moment ago,
+   * a block added mid-scan). The start handler reads `botDeniedText` only after the gate has run,
+   * which is why a getter can see the outcome.
    */
   function botAuthFor(site, from, live) {
     const name = cleanName(site.name) || site.namespace;
+    const gate = hubGate({ registry, namespace: site.namespace, recordRequests: live, onError });
+    let refusal = null;
+
     return createTelegramQrAuth({
       botUsername,
       botToken,
       telegram,
       store,
       namespace: site.namespace,
-      authorize: hubGate({ registry, namespace: site.namespace, recordRequests: live, onError }),
+      authorize: async (user, ctx) => {
+        const result = await gate(user, ctx);
+        refusal = result === true ? null : result.reason;
+        return result;
+      },
       session: { secret: sessionSecret },
       branding: {
         botSuccessText: `✅ You're signed in to ${name} — head back to your browser tab.`,
-        botDeniedText: site.enabled
-          ? `🔒 You don't have access to ${name} yet.\nYour Telegram ID is ${from.id} — send it to an administrator to be added.`
-          : `${name} is switched off right now.`,
+        get botDeniedText() {
+          switch (refusal) {
+            case "namespace_disabled":
+              return `${name} is switched off right now.`;
+            case "blocked":
+              return `🚫 You can't sign in to ${name}.`;
+            default:
+              return `🔒 You don't have access to ${name} yet.\nYour Telegram ID is ${from.id} — send it to an administrator to be added.`;
+          }
+        },
       },
     });
   }

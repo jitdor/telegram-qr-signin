@@ -26,9 +26,10 @@ export function expandNumbered(query, args) {
   return { sql, args: expanded };
 }
 
-export function makeFakeD1({ sql = "d1.sql" } = {}) {
+export function makeFakeD1({ sql = "d1.sql", schema } = {}) {
   const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync(join(__dirname, "..", "migrations", sql), "utf8"));
+  // `schema` lets a test start from an older database than the migration file describes.
+  sqlite.exec(schema ?? readFileSync(join(__dirname, "..", "migrations", sql), "utf8"));
 
   return {
     sqlite,

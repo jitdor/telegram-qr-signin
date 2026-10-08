@@ -7,7 +7,7 @@
 // admins acting at once cannot corrupt anything. A gate check is ONE query (`access`), because it
 // runs on every guarded request of every site.
 
-import { assertSiteNamespace, cleanLabel, cleanName } from "./validate.js";
+import { DEFAULT_ACCESS, assertAccessMode, assertSiteNamespace, cleanLabel, cleanName } from "./validate.js";
 import { DEFAULT_REQUEST_CAP, DEFAULT_AUDIT_KEEP, DEFAULT_LIST_LIMIT } from "./store.js";
 
 // Table names are interpolated, not bound (SQLite cannot bind identifiers), so they are validated.
@@ -31,6 +31,7 @@ export class D1HubStore {
       namespaces: `${prefix}namespaces`,
       admins: `${prefix}admins`,
       grants: `${prefix}grants`,
+      blocks: `${prefix}blocks`,
       requests: `${prefix}requests`,
       audit: `${prefix}audit`,
     };
@@ -41,7 +42,7 @@ export class D1HubStore {
   async listNamespaces() {
     const { results } = await this.db
       .prepare(
-        `SELECT n.namespace, n.name, n.enabled, n.created_at, n.created_by,
+        `SELECT n.namespace, n.name, n.enabled, n.access, n.created_at, n.created_by,
                 (SELECT COUNT(*) FROM ${this.t.grants} g WHERE g.namespace = n.namespace) AS users,
                 (SELECT COUNT(*) FROM ${this.t.requests} r WHERE r.namespace = n.namespace) AS requests
          FROM ${this.t.namespaces} n ORDER BY n.name COLLATE NOCASE, n.namespace`
@@ -53,38 +54,47 @@ export class D1HubStore {
 
   async getNamespace(namespace) {
     const row = await this.db
-      .prepare(`SELECT namespace, name, enabled, created_at, created_by FROM ${this.t.namespaces} WHERE namespace = ?1`)
+      .prepare(`SELECT namespace, name, enabled, access, created_at, created_by FROM ${this.t.namespaces} WHERE namespace = ?1`)
       .bind(namespace)
       .first();
     return row ? rowToNamespace(row) : null;
   }
 
-  async createNamespace({ namespace, name, createdBy = null }) {
+  async createNamespace({ namespace, name, access = DEFAULT_ACCESS, createdBy = null }) {
     assertSiteNamespace(namespace);
+    assertAccessMode(access);
     const res = await this.db
       .prepare(
-        `INSERT INTO ${this.t.namespaces} (namespace, name, enabled, created_at, created_by)
-         VALUES (?1, ?2, 1, ?3, ?4) ON CONFLICT (namespace) DO NOTHING`
+        `INSERT INTO ${this.t.namespaces} (namespace, name, enabled, access, created_at, created_by)
+         VALUES (?1, ?2, 1, ?3, ?4, ?5) ON CONFLICT (namespace) DO NOTHING`
       )
-      .bind(namespace, cleanName(name) || namespace, nowSeconds(), createdBy)
+      .bind(namespace, cleanName(name) || namespace, access, nowSeconds(), createdBy)
       .run();
     return res.meta.changes > 0;
   }
 
-  async updateNamespace(namespace, { name, enabled } = {}) {
+  async updateNamespace(namespace, { name, enabled, access } = {}) {
+    if (access !== undefined) assertAccessMode(access);
     const res = await this.db
       .prepare(
-        `UPDATE ${this.t.namespaces} SET name = COALESCE(?2, name), enabled = COALESCE(?3, enabled)
+        `UPDATE ${this.t.namespaces}
+         SET name = COALESCE(?2, name), enabled = COALESCE(?3, enabled), access = COALESCE(?4, access)
          WHERE namespace = ?1`
       )
-      .bind(namespace, name === undefined ? null : cleanName(name) || namespace, enabled === undefined ? null : enabled ? 1 : 0)
+      .bind(
+        namespace,
+        name === undefined ? null : cleanName(name) || namespace,
+        enabled === undefined ? null : enabled ? 1 : 0,
+        access === undefined ? null : access
+      )
       .run();
     return res.meta.changes > 0;
   }
 
-  /** Grants and requests first, then the site — see MemoryHubStore.deleteNamespace for why. */
+  /** Grants, blocks and requests first, then the site — see MemoryHubStore.deleteNamespace for why. */
   async deleteNamespace(namespace) {
     await this.db.prepare(`DELETE FROM ${this.t.grants} WHERE namespace = ?1`).bind(namespace).run();
+    await this.db.prepare(`DELETE FROM ${this.t.blocks} WHERE namespace = ?1`).bind(namespace).run();
     await this.db.prepare(`DELETE FROM ${this.t.requests} WHERE namespace = ?1`).bind(namespace).run();
     const res = await this.db.prepare(`DELETE FROM ${this.t.namespaces} WHERE namespace = ?1`).bind(namespace).run();
     return res.meta.changes > 0;
@@ -95,14 +105,21 @@ export class D1HubStore {
   async access(namespace, userId) {
     const row = await this.db
       .prepare(
-        `SELECT n.enabled AS enabled,
-                EXISTS (SELECT 1 FROM ${this.t.grants} g WHERE g.namespace = n.namespace AND g.telegram_id = ?2) AS granted
+        `SELECT n.enabled AS enabled, n.access AS access,
+                EXISTS (SELECT 1 FROM ${this.t.grants} g WHERE g.namespace = n.namespace AND g.telegram_id = ?2) AS granted,
+                EXISTS (SELECT 1 FROM ${this.t.blocks} b WHERE b.namespace = n.namespace AND b.telegram_id = ?2) AS blocked
          FROM ${this.t.namespaces} n WHERE n.namespace = ?1`
       )
       .bind(namespace, Number(userId))
       .first();
-    if (!row) return { exists: false, enabled: false, granted: false };
-    return { exists: true, enabled: Boolean(row.enabled), granted: Boolean(row.granted) };
+    if (!row) return { exists: false, enabled: false, mode: DEFAULT_ACCESS, granted: false, blocked: false };
+    return {
+      exists: true,
+      enabled: Boolean(row.enabled),
+      mode: row.access ?? DEFAULT_ACCESS,
+      granted: Boolean(row.granted),
+      blocked: Boolean(row.blocked),
+    };
   }
 
   // --- Super admins ----------------------------------------------------------------------------
@@ -174,6 +191,44 @@ export class D1HubStore {
   async removeGrant(namespace, id) {
     const res = await this.db
       .prepare(`DELETE FROM ${this.t.grants} WHERE namespace = ?1 AND telegram_id = ?2`)
+      .bind(namespace, Number(id))
+      .run();
+    return res.meta.changes > 0;
+  }
+
+  // --- Blocks ----------------------------------------------------------------------------------
+
+  async listBlocks(namespace, { limit = DEFAULT_LIST_LIMIT } = {}) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT namespace, telegram_id, label, added_by, added_at FROM ${this.t.blocks}
+         WHERE namespace = ?1 ORDER BY added_at DESC, telegram_id LIMIT ?2`
+      )
+      .bind(namespace, limit)
+      .all();
+    return results.map((row) => ({
+      namespace: row.namespace,
+      id: Number(row.telegram_id),
+      label: row.label ?? "",
+      addedBy: row.added_by == null ? null : Number(row.added_by),
+      addedAt: Number(row.added_at),
+    }));
+  }
+
+  async addBlock({ namespace, id, label = "", addedBy = null }) {
+    const res = await this.db
+      .prepare(
+        `INSERT INTO ${this.t.blocks} (namespace, telegram_id, label, added_by, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (namespace, telegram_id) DO NOTHING`
+      )
+      .bind(namespace, Number(id), cleanLabel(label), addedBy, nowSeconds())
+      .run();
+    return res.meta.changes > 0;
+  }
+
+  async removeBlock(namespace, id) {
+    const res = await this.db
+      .prepare(`DELETE FROM ${this.t.blocks} WHERE namespace = ?1 AND telegram_id = ?2`)
       .bind(namespace, Number(id))
       .run();
     return res.meta.changes > 0;
@@ -271,6 +326,7 @@ function rowToNamespace(row) {
     namespace: row.namespace,
     name: row.name,
     enabled: Boolean(row.enabled),
+    access: row.access ?? DEFAULT_ACCESS,
     createdAt: Number(row.created_at),
     createdBy: row.created_by == null ? null : Number(row.created_by),
   };

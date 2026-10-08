@@ -4,14 +4,17 @@
 import { parseIdList } from "../gates.js";
 
 /**
- * Who may sign in to the site registered as `namespace`: whoever holds a grant for it in the
- * registry. Read live — one query per check, no cache — so revoking in the console locks someone
- * out of the site on their next request, which is the same guarantee chatMember gives.
+ * Who may sign in to the site registered as `namespace`. In the default "granted" mode that is
+ * whoever holds a grant for it in the registry; in "anyone" mode it is any Telegram account. A
+ * block refuses someone in both modes, and beats a grant. Read live — one query per check, no
+ * cache — so revoking or blocking in the console locks someone out of the site on their next
+ * request, which is the same guarantee chatMember gives.
  *
  * Refusal reasons, so a custom login page or log can tell them apart:
  *   "unknown_namespace"  the site is not registered (deleted, or never added)
  *   "namespace_disabled" the site is switched off in the console
- *   "not_granted"        the site is on, and this person has no grant
+ *   "blocked"            this person is on the site's block list
+ *   "not_granted"        the site needs a grant, and this person has none
  *   "hub_unavailable"    the registry could not be read (transient: retry, do not sign anyone out)
  *
  * @param {object} options
@@ -19,7 +22,8 @@ import { parseIdList } from "../gates.js";
  * @param {string} options.namespace
  * @param {boolean|(() => boolean)} [options.recordRequests=true]  Remember refused scans, so an
  *   admin can approve the person from the console without being told their numeric id. Only acts at
- *   `stage: "confirm"` — a refused scan, not a stale cookie. A function is asked each time.
+ *   `stage: "confirm"` — a refused scan, not a stale cookie — and only for a site that needs
+ *   grants, since an open site has nobody to approve. A function is asked each time.
  * @param {(err: unknown) => void} [options.onError]
  */
 export function hubGate({ registry, namespace, recordRequests = true, onError = defaultOnError }) {
@@ -39,7 +43,11 @@ export function hubGate({ registry, namespace, recordRequests = true, onError = 
 
     if (!state.exists) return { ok: false, reason: "unknown_namespace" };
     if (!state.enabled) return { ok: false, reason: "namespace_disabled" };
-    if (state.granted) return true;
+    // Before the grant check, and in every mode: a ban holds even for someone with a grant, and on
+    // a site that is open to everyone it is the only way anyone is refused. A blocked person is
+    // also not recorded as an access request — the queue is for people an admin might approve.
+    if (state.blocked) return { ok: false, reason: "blocked" };
+    if (state.mode === "anyone" || state.granted) return true;
 
     const record = typeof recordRequests === "function" ? recordRequests() : recordRequests;
     if (ctx?.stage === "confirm" && record) {

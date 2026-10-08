@@ -29,7 +29,7 @@ Three Workers' worth of roles, but only two things are shared between them:
 | Shared | What it is | Who writes it |
 | --- | --- | --- |
 | **Login store** (KV, D1 or a Durable Object) | The 10-minute hand-off record for a scan | Sites mint, the hub confirms |
-| **Registry** (`D1HubStore`) | Sites, grants, super admins, requests, audit log | Only the hub's console |
+| **Registry** (`D1HubStore`) | Sites, grants, blocks, super admins, requests, audit log | The hub's console. A site writes it only if you make its moderation call `addBlock` (see [Open sites](#open-sites)) |
 
 **Sites never hold the bot token.** Only the hub talks to Telegram, so a compromised site cannot
 impersonate the bot or message your users.
@@ -62,6 +62,10 @@ wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migratio
 wrangler kv namespace create LOGINS
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<hub>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 ```
+
+Already running an earlier version of the hub? Apply `migrations/hub-d1-upgrade-access.sql` **once**
+to add open sites and block lists. Every existing site stays approved-people-only, so nobody gains
+or loses access (a second run fails loudly and changes nothing).
 
 **2. Open `https://<hub>/admin`** and scan the QR with a Telegram account whose numeric id is in
 `superAdmins`. Add a site (`docs`, "Internal docs"). Grant people access.
@@ -100,12 +104,14 @@ Server-rendered, no JavaScript, no external requests. Everything is behind the s
 | Area | What a super admin can do |
 | --- | --- |
 | **Sites** | Add a site (namespace + display name), rename it, switch sign-in off and on, delete it |
+| **Who can sign in** | Keep a site to approved people (the default), or [open it to anyone](#open-sites) with a Telegram account |
 | **People with access** | Grant by Telegram id (paste many at once, with an optional note), revoke |
-| **Waiting for approval** | People who scanned a site's QR and were refused. Approve with one click, or dismiss — no need to ask anyone for their numeric id |
+| **Waiting for approval** | People who scanned a site's QR and were refused. Approve with one click, dismiss, or block — no need to ask anyone for their numeric id |
+| **Blocked people** | Refuse someone from a site whatever else is true of them — works on open sites too |
 | **Super admins** | Add and remove other super admins |
 | **Recent activity** | An audit log of every change: who, what, which site |
 
-Revoking, disabling and deleting take effect on the person's **next request** to the site, not when
+Revoking, blocking, disabling and deleting take effect on the person's **next request** to the site, not when
 their cookie expires — the same live-check guarantee `chatMember` gives.
 
 When someone is turned away, the bot tells them their Telegram id and the site's name, so even
@@ -118,13 +124,58 @@ There are two kinds of access, deliberately separate:
 - **Super admin** — can use the console. Does **not** get into any site by being one; grant
   yourself access like anyone else.
 - **Site access** — a grant for one namespace. It lets someone sign in to that site and does nothing
-  else. It is per site: access to `docs` opens nothing on `wiki`.
+  else. It is per site: access to `docs` opens nothing on `wiki`. (A site can instead be
+  [open to anyone](#open-sites).)
 
 **Bootstrap admins** (`superAdmins` in config) always work, cannot be removed in the console, and
 never touch the database to be recognised. That is what makes locking yourself out impossible: even
 with an empty or broken registry, they can sign in and repair it. Admins you add in the console are
 extra, removable, and recorded with who added them. All super admins are equal; there are no
 per-site administrators.
+
+## Open sites
+
+A site normally lets in only people you grant access to. For a public site — a forum, say — you can
+instead let in **anyone with a Telegram account**. It is a setting on one site, and sites are
+approved-people-only until you change it.
+
+```js
+await registry.createNamespace({ namespace: "forum", name: "The forum", access: "anyone" });
+// or, in the console: the site's page → Who can sign in → Open to anyone
+```
+
+What changes, and what does not:
+
+- **Anyone can sign in**, except people on the site's block list. The grant list stops being
+  consulted but is **kept**, so requiring approval again restores it exactly.
+- **Opening a site takes a deliberate step.** The console asks you to type the site's id, and the
+  change is written to the audit log. Going back to approved-only needs no confirmation: narrowing
+  access is the safe direction, and people without a grant are locked out on their next request.
+- **There is no approval queue** on an open site — nobody to approve — and refused scans are not
+  recorded.
+- **A switched-off site stays off**, open or not.
+
+**An open site is responsible for its own accounts.** The hub only proves *who someone is*: a
+Telegram user id, a display name and an optional username. Everything after that is the site's job:
+
+- Key your accounts on the **Telegram id**. Usernames can be changed or removed at any time, and
+  names are whatever the person typed — escape them like any user input.
+- Keep your own roles, moderation and rate limiting. Telegram accounts need a phone number, which
+  makes throwaway signups harder, but it does not stop abuse.
+- The hub **does not know who has signed up** to an open site, so it cannot list them. To ban
+  someone, take the id from your own member record and block it in the console — or, from the site's
+  own moderation tools, call `registry.addBlock({ namespace, id, label })`. (That means the site
+  holds write access to the registry. Fine for a site you run; it is one more reason this mode is for
+  sites you control. For someone else's site, use the [OIDC provider](../README.md#running-a-public-identity-provider).)
+
+### Blocks
+
+A block refuses one person from one site, **whatever else is true of them**: it beats a grant and
+applies to open sites too. It is checked on every request, so it ends their current session on its
+next request, and unblocking restores access without further action. Blocking someone also removes
+their pending approval request, but leaves any grant in place — unblocking them does not silently
+erase it. The bot tells a blocked person plainly that they can't sign in, without inviting them to
+ask for access.
 
 ## What protects the console
 
@@ -151,10 +202,11 @@ per-site administrators.
   characters>`); a site that sets a custom `tokenBytes` would not be recognised.
 - **One namespace, one site.** Two Workers sharing a namespace share a login queue and an access
   list. Give each site its own.
-- **Deleting a site deletes its grants.** Re-adding the same namespace later starts with nobody.
+- **Deleting a site deletes its grants and its block list.** Re-adding the same namespace later
+  starts with nobody, and with nobody banned.
 - **Switching a site off keeps its grants.** Nobody can sign in, and open sessions fail on their next
   request; switching it back on restores everyone.
-- **Refused scans are remembered, but only for real QR codes.** A request is recorded only if the
+- **Refused scans are remembered, but only for real QR codes, and only on sites that need grants.** A request is recorded only if the
   scan carried a token that a site actually minted and is still pending; messaging the bot made-up
   payloads is refused without leaving a trace. Requests are capped per site (100, newest kept), so
   the list cannot be flooded into growing without bound.
@@ -179,7 +231,10 @@ per-site administrators.
 - **No groups, expiry or bulk import.** A grant is a Telegram id for a site; it lasts until revoked.
   The registry is a plain interface (see below), so scripts can add many people at once.
 - **Grants are by numeric Telegram id.** Usernames are not resolvable by a bot, and not stable.
-- **The console lists at most 500 people per site.** Past that, manage them from the registry.
+- **The console lists at most 500 people (and 500 blocks) per site.** Past that, manage them from the
+  registry.
+- **No list of an open site's members.** The hub learns nothing about who signs in to an open site
+  beyond the moment of the scan.
 
 ## Using the registry from code
 
@@ -190,7 +245,9 @@ a new environment, import a list, or mirror grants from another system:
 const registry = new D1HubStore(env.HUB_DB);
 await registry.createNamespace({ namespace: "docs", name: "Internal docs" });
 await registry.addGrant({ namespace: "docs", id: 123456789, label: "Ada" });
-await registry.access("docs", 123456789);   // { exists: true, enabled: true, granted: true }
+await registry.addBlock({ namespace: "docs", id: 555, label: "left the company" });
+await registry.access("docs", 123456789);
+// { exists: true, enabled: true, mode: "granted", granted: true, blocked: false }
 ```
 
 Direct writes skip the audit log; call `registry.appendAudit({ actor, action, target, detail })`
@@ -240,8 +297,9 @@ A custom sign-in page or log can tell these apart (`ctx.stage` is as in README �
 
 | `reason` | Meaning |
 | --- | --- |
-| `not_granted` | The site is on and this person has no grant |
-| `namespace_disabled` | The site is switched off in the console |
+| `not_granted` | The site needs grants and this person has none |
+| `blocked` | This person is on the site's block list (beats a grant; applies to open sites) |
+| `namespace_disabled` | The site is switched off in the console (open or not) |
 | `unknown_namespace` | The site is not registered (deleted, or never added) |
 | `not_admin` | A scan of the console's QR by someone who is not a super admin |
 | `hub_unavailable` | The registry could not be read — transient, retry |

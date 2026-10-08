@@ -73,7 +73,7 @@ test("package.json exports the hub entry point and its migration", () => {
 test("the hub entry point exports what its types and docs promise", async () => {
   const mod = await import("../src/hub/index.js");
   assert.deepEqual(Object.keys(mod).sort(), [
-    "ADMIN_NAMESPACE", "D1HubStore", "MemoryHubStore", "NAMESPACE_RE", "createHub", "createSiteAuth",
+    "ADMIN_NAMESPACE", "D1HubStore", "MemoryHubStore", "NAMESPACE_RE", "OriginInUseError", "createHub", "createSiteAuth",
     "hubGate", "parseRootAdmins", "parseTelegramId", "parseTelegramIds", "superAdminGate",
   ]);
   const types = readFileSync(join(ROOT, "types", "hub.d.ts"), "utf8");

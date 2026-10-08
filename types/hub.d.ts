@@ -1,6 +1,6 @@
 // Types for telegram-qr-signin/hub.
 
-import type { Gate, LoginStore, TelegramApi, TelegramQrAuth, TelegramQrAuthConfig, Branding, AuthUser } from "./index";
+import type { Gate, LoginStore, TelegramApi, TelegramQrAuth, TelegramQrAuthConfig, Branding, AuthUser, BeginLoginResult } from "./index";
 
 /**
  * Who a site lets in.
@@ -92,10 +92,21 @@ export interface HubAccess {
 export interface HubStore {
   listNamespaces(): Promise<HubNamespaceSummary[]>;
   getNamespace(namespace: string): Promise<HubNamespace | null>;
-  /** `origins` is required and must be non-empty: URLs such as "https://docs.example.com" (http only for localhost). Rejects otherwise. */
+  /**
+   * `origins` is required and must be non-empty: URLs such as "https://docs.example.com" (http only
+   * for localhost). Rejects otherwise, and with `OriginInUseError` if one belongs to another site.
+   */
   createNamespace(site: { namespace: string; name?: string; origins: string[]; access?: HubAccessMode; createdBy?: number | null }): Promise<boolean>;
   updateNamespace(namespace: string, changes: { name?: string; enabled?: boolean; access?: HubAccessMode }): Promise<boolean>;
-  /** True if added; false if already there or the site does not exist. Rejects an invalid URL, or more than 10. */
+  /**
+   * The sites whose origins include `url` (normalised first): one, normally; none if unregistered.
+   * More than one only after a race; callers must refuse rather than pick.
+   */
+  namespacesForOrigin(url: string): Promise<string[]>;
+  /**
+   * True if added; false if already there or the site does not exist. Rejects an invalid URL, more
+   * than 10, or a URL that belongs to another site (`OriginInUseError`).
+   */
   addOrigin(namespace: string, url: string): Promise<boolean>;
   /** True if removed; false if absent, or if it is the site's only origin (a site is never left unbound). */
   removeOrigin(namespace: string, url: string): Promise<boolean>;
@@ -186,18 +197,48 @@ export declare function createHub(config: HubConfig): Hub;
 
 export interface SiteAuthConfig extends Omit<TelegramQrAuthConfig, "namespace" | "authorize" | "botToken" | "session"> {
   registry: HubStore;
-  /** The id this site was registered under in the console. */
-  namespace: string;
+  /**
+   * The id this site was registered under. Leave it out and the site works it out from the URL each
+   * request arrives at (the URL must be registered in the console, to one site). Pass it to pin the
+   * site instead — needed for a site registered before URLs were bound.
+   */
+  namespace?: string;
   /** Required: a site has no bot token to fall back on. Give each site its own. */
-  session: TelegramQrAuthConfig["session"] & { secret: string };
+  session: NonNullable<TelegramQrAuthConfig["session"]> & { secret: string };
   /** Optional extra gate, ANDed with the hub's. Needs `botToken` or `telegram`. */
   authorize?: Gate;
   /** Not needed unless an extra gate calls Telegram. */
   botToken?: string;
   recordRequests?: boolean | (() => boolean);
+  /** Registry failures. Defaults to console.error. */
+  onError?: (err: unknown) => void;
 }
 
-export declare function createSiteAuth(config: SiteAuthConfig): TelegramQrAuth;
+/**
+ * What `createSiteAuth` returns when it is not given a namespace: the site-facing half of
+ * TelegramQrAuth, with each call routed to whichever site the request's origin is registered to.
+ * Requests at an unregistered origin are refused (403), or answered 503 if the registry cannot be
+ * read. The session cookie defaults to the name "site_session".
+ */
+export interface SiteAuth
+  extends Pick<TelegramQrAuth, "basePath" | "paths" | "cookieName" | "tokenTtlSeconds" | "getSession" | "verifyAssertion" | "logoutResponse" | "guard" | "handle" | "poll" | "scan" | "store" | "telegram" | "session" | "authorize"> {
+  /** The namespace the request's origin is registered to, or null. Handy for keying your own data per site. */
+  namespaceFor(request: Request): Promise<string | null>;
+  /** Needs `options.request` to know which site it is for; rejects if that origin is not registered. */
+  beginLogin(options: { request: Request }): Promise<BeginLoginResult>;
+  loginPage(options: { request: Request; error?: string; redirectTo?: string }): Promise<string>;
+  loginResponse(options: { request: Request; error?: string; status?: number; clearCookie?: boolean; redirectTo?: string }): Promise<Response>;
+}
+
+export declare function createSiteAuth(config: SiteAuthConfig & { namespace: string }): TelegramQrAuth;
+export declare function createSiteAuth(config: SiteAuthConfig & { namespace?: undefined }): SiteAuth;
+
+/** Thrown when a URL is given to a site but already belongs to another. */
+export declare class OriginInUseError extends Error {
+  code: "origin_in_use";
+  origin: string;
+  owner: string;
+}
 
 export declare function hubGate(options: {
   registry: HubStore;

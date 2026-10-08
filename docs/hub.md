@@ -86,8 +86,7 @@ import { KVLoginStore } from "telegram-qr-signin";
 import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
 
 const auth = createSiteAuth({
-  namespace: "docs",                       // the id you registered in the console
-  botUsername: env.TELEGRAM_BOT_USERNAME,  // no bot token
+  botUsername: env.TELEGRAM_BOT_USERNAME,  // no bot token, and no site id: see below
   store: new KVLoginStore(env.LOGINS),     // the SAME store as the hub
   registry: new D1HubStore(env.HUB_DB),    // the SAME database as the hub
   session: { secret: env.SESSION_SECRET }, // required, and different for every site
@@ -98,6 +97,13 @@ if (handled) return handled;
 const gate = await auth.guard(request);    // cookie + a live registry check, every request
 if (!gate.ok) return gate.response;
 ```
+
+The site does not say which site it is. On each request it looks up the URL it was reached at in the
+registry and acts as the site that URL is registered to, so there is no id to copy into the code and
+nothing to drift out of step with the console. At a URL that is not registered it refuses everything:
+no QR, no login page, no session. (Costs one extra registry query per request. Pass `namespace` to
+pin the site instead and skip it — you need to for a legacy site that has no URL yet. Everything
+here works the same either way.)
 
 Both bindings (`LOGINS`, `HUB_DB`) point at the hub's resources — copy the ids into the site's
 `wrangler.jsonc` ([`site-wrangler.jsonc`](../examples/hub/site-wrangler.jsonc)). Everything else
@@ -149,6 +155,10 @@ knows which site a scan is for, and the stable key its access list hangs off. It
 URL on purpose. A URL can change, or gain a `workers.dev` twin, and a site can have several, but
 people's access must survive that; the id is what stays put.
 
+**The site's code never needs it.** A site finds its own id from the URL it is served at, so the id
+lives in one place, the registry. You only meet it in the console, in the QR link, and if you pin a
+site in code.
+
 You rarely need to invent one. When you add a site the console proposes an id from the display name
 (`Internal docs` → `internal-docs`), or from the URL's first label if there is no name
 (`docs.example.com` → `docs`), adds `-2`, `-3`… if it is taken, and shows it in an editable box on a
@@ -179,6 +189,10 @@ What the origin means in practice:
   (except for `localhost` and `127.0.0.1`, so you can register a dev server), and `www.` is a
   different origin. If people can reach the site at both a custom domain and its `workers.dev`
   address, register both.
+- **A URL belongs to exactly one site**, because a site finds its id from its URL. Giving a URL to a
+  second site is refused (in the console and by the registry). If two sites ever do claim one URL —
+  two admins racing — the site at that URL refuses to run until one lets go, rather than guessing
+  which it is. Two services on one origin under different paths are therefore one site.
 - A site can have up to ten, so a custom domain, its `workers.dev` address and a preview can coexist.
   The console never lets you remove the last one; add the new URL first.
 - Removing a URL takes effect on the next request from it.
@@ -266,9 +280,12 @@ ask for access.
 
 - **Sites use the default token size.** The hub recognises a scan by its shape (`<namespace>_<32 hex
   characters>`); a site that sets a custom `tokenBytes` would not be recognised.
-- **One namespace, one site (now enforced).** A namespace works only from its registered URLs, so a
-  second site cannot silently borrow it. Two sites that genuinely should share an audience can be
-  registered under one namespace by giving it both URLs.
+- **One URL, one site.** A site works only at its registered URLs and only ever acts as the site they
+  are registered to, so a second site cannot borrow it. Two URLs that genuinely share an audience can
+  be registered to one site.
+- **The session cookie is named `site_session`** for a site that resolves its own id (the name cannot
+  depend on an id not yet known). It is per origin, so sites cannot collide; change it with
+  `session.cookieName`. A site pinned with `namespace` keeps `<namespace>_session`.
 - **Deleting a site deletes its grants and its block list.** Re-adding the same namespace later
   starts with nobody, and with nobody banned.
 - **Switching a site off keeps its grants.** Nobody can sign in, and open sessions fail on their next
@@ -313,6 +330,7 @@ const registry = new D1HubStore(env.HUB_DB);
 await registry.createNamespace({ namespace: "docs", name: "Internal docs", origins: ["https://docs.example.com"] });
 await registry.addGrant({ namespace: "docs", id: 123456789, label: "Ada" });
 await registry.addBlock({ namespace: "docs", id: 555, label: "left the company" });
+await registry.namespacesForOrigin("https://docs.example.com");   // ["docs"]
 await registry.access("docs", 123456789);
 // { exists: true, enabled: true, mode: "granted", origins: ["https://docs.example.com"], granted: true, blocked: false }
 ```
@@ -354,7 +372,12 @@ createHub({
 | `adminAuth`, `registry`, `store` | Escape hatches |
 
 `createSiteAuth` takes everything `createTelegramQrAuth` does, plus `registry` and a required
-`session.secret`; `botToken` is optional. `hubGate({ registry, namespace })` and
+`session.secret`; `botToken` and `namespace` are optional. Without `namespace` it returns the
+site-facing half of the usual object (`handle`, `guard`, `poll`, `scan`, `beginLogin`, `loginPage`,
+`loginResponse`, `logoutResponse`, `getSession`, `verifyAssertion`, `authorize`) plus
+`namespaceFor(request)`, which tells you the id a request resolved to — handy for keying your own
+data per site. Bot-side members (`handleStart`, `confirm`) and the link helpers (`deepLinkFor`…)
+need a namespace and live on the hub; use the `payload` that `beginLogin` returns. `hubGate({ registry, namespace })` and
 `superAdminGate({ registry, rootAdmins })` are the two gates underneath, for composing by hand with
 `every` / `some`.
 
@@ -367,7 +390,8 @@ A custom sign-in page or log can tell these apart (`ctx.stage` is as in README �
 | `not_granted` | The site needs grants and this person has none |
 | `blocked` | This person is on the site's block list (beats a grant; applies to open sites) |
 | `namespace_disabled` | The site is switched off in the console (open or not) |
-| `origin_not_allowed` | The request reached the site at a URL its namespace is not registered for |
+| `origin_not_allowed` | The request reached the site at a URL that is not registered for it (or, for a site that resolves its own id, not registered to any site) |
+| `origin_ambiguous` | The URL is registered to more than one site; the site refuses until that is fixed |
 | `unknown_namespace` | The site is not registered (deleted, or never added) |
 | `not_admin` | A scan of the console's QR by someone who is not a super admin |
 | `hub_unavailable` | The registry could not be read — transient, retry |

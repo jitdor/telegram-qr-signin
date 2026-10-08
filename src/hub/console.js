@@ -19,6 +19,7 @@ import { escapeHtml as esc } from "../login-page.js";
 import { hmacSha256, toHex, timingSafeEqualHex } from "../crypto.js";
 import {
   ACCESS_MODES,
+  OriginInUseError,
   NAMESPACE_RE,
   assertSiteNamespace,
   cleanLabel,
@@ -60,6 +61,7 @@ const ERR_MESSAGES = {
   site_exists: "A site with that id already exists.",
   bad_url: "Enter the site's full URL, such as https://docs.example.com (https only; http is allowed for localhost).",
   origin_exists: "That URL is already registered for this site.",
+  origin_in_use: "That URL already belongs to another site. A URL can belong to only one site, because a site finds its own id from the URL it is served at.",
   origin_last: "A site must keep at least one URL. Add the new one first, then remove this one.",
   origin_missing: "That URL is not registered for this site.",
   too_many_origins: "A site can have at most 10 URLs.",
@@ -290,7 +292,7 @@ ${flash(ctx.url)}
 ${flash(ctx.url)}
 <section>
   <h2>${esc(site.name)} ${site.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}</h2>
-  <p class="lead">Namespace <code>${esc(namespace)}</code>. In the site's code: <code>createSiteAuth({ namespace: "${esc(namespace)}", … })</code>.</p>
+  <p class="lead">Id <code>${esc(namespace)}</code>. The site's code does not need it: <code>createSiteAuth({ registry, store, botUsername, session })</code> finds this site from the URL it is served at.</p>
   ${postForm(ctx, `${base}/update`, `
     <div class="row">
       <label>Display name<input name="name" value="${esc(site.name)}" required maxlength="60" autocomplete="off"></label>
@@ -305,13 +307,13 @@ ${
     ? ""
     : `<section class="warn-zone">
   <h2>Not bound to a URL</h2>
-  <p class="lead">This site was registered before sites were bound to URLs, so any Worker with the hub's shared bindings can use this namespace. Add the URL it is served from, below, to close that.</p>
+  <p class="lead">This site was registered before sites were bound to URLs, so any Worker with the hub's shared bindings can use this id, and a site cannot find it from its URL. Add the URL it is served from, below, to close that.</p>
 </section>`
 }
 
 <section>
   <h2>Site URLs <span class="count">${site.origins.length}</span></h2>
-  <p class="lead">The namespace works only from these origins. A visitor reaching the site at any other address is refused, and so is a QR code shown anywhere else. Use the address as it appears in the browser, for example both your custom domain and its <code>workers.dev</code> address if people can reach either.</p>
+  <p class="lead">The site finds its own id from the address it is reached at, so each URL can belong to only one site, and a visitor reaching the site at any other address is refused, as is a QR code shown anywhere else. Use the address as it appears in the browser, for example both your custom domain and its <code>workers.dev</code> address if people can reach either.</p>
   ${
     site.origins.length
       ? `<div class="table-wrap"><table>
@@ -474,6 +476,7 @@ ${
   async function newSite(ctx) {
     const origin = normalizeOrigin(String(ctx.form.get("url") ?? ""));
     if (!origin) return redirect(adminPath, { err: "bad_url" });
+    if ((await registry.namespacesForOrigin(origin)).length) return redirect(adminPath, { err: "origin_in_use" });
     const name = cleanName(ctx.form.get("name"));
     const taken = (await registry.listNamespaces()).map((site) => site.namespace);
     const namespace = suggestNamespace({ name, url: origin }, taken);
@@ -482,14 +485,14 @@ ${
 <p class="crumb"><a href="${adminPath}">&larr; All sites</a></p>
 <section>
   <h2>Add a site</h2>
-  <p class="lead">Check the id before saving. It is what the site's code and the bot use to recognise this site, and it cannot be changed afterwards.</p>
+  <p class="lead">Check the id before saving. It identifies this site in the QR code and in its stored access list, and it cannot be changed afterwards.</p>
   ${postForm(ctx, `${adminPath}/ns`, `
     <div class="row">
       <label>Id<input name="namespace" value="${esc(namespace)}" required maxlength="24" pattern="[A-Za-z0-9\\-]{1,24}" autocomplete="off" spellcheck="false"></label>
       <label>Display name<input name="name" value="${esc(name)}" maxlength="60" placeholder="${esc(namespace)}" autocomplete="off"></label>
       <label class="grow">Site URL<input name="url" value="${esc(origin)}" required maxlength="200" autocomplete="off" spellcheck="false" inputmode="url"></label>
     </div>
-    <p class="hint">Suggested from ${name ? "the display name" : "the URL"}. Letters, digits and hyphens, up to 24. In the site's code it is <code>createSiteAuth({ namespace: "…", … })</code>.</p>
+    <p class="hint">Suggested from ${name ? "the display name" : "the URL"}. Letters, digits and hyphens, up to 24. The site's code does not need to know it: the site finds its id from its URL.</p>
     <div class="row"><button class="btn primary">Add site</button> <a class="btn quiet" href="${adminPath}">Cancel</a></div>`)}
 </section>`;
     return page("Add a site", body, ctx);
@@ -505,9 +508,14 @@ ${
     const origin = normalizeOrigin(String(form.get("url") ?? ""));
     if (!origin) return redirect(adminPath, { err: "bad_url" });
     const name = cleanName(form.get("name")) || namespace;
-    if (!(await registry.createNamespace({ namespace, name, origins: [origin], createdBy: Number(session.id) }))) {
-      return redirect(adminPath, { err: "site_exists" });
+    let created;
+    try {
+      created = await registry.createNamespace({ namespace, name, origins: [origin], createdBy: Number(session.id) });
+    } catch (err) {
+      if (err instanceof OriginInUseError) return redirect(adminPath, { err: "origin_in_use" });
+      throw err;
     }
+    if (!created) return redirect(adminPath, { err: "site_exists" });
     await audit(session, "site.create", namespace, `${name}; ${origin}`);
     return redirect(`${adminPath}/ns/${namespace}`, { ok: "site_created" });
   }
@@ -533,7 +541,14 @@ ${
     const origin = normalizeOrigin(String(form.get("url") ?? ""));
     if (!origin) return redirect(back, { err: "bad_url" });
     if (site.origins.length >= 10) return redirect(back, { err: "too_many_origins" });
-    if (!(await registry.addOrigin(namespace, origin))) return redirect(back, { err: "origin_exists" });
+    let added;
+    try {
+      added = await registry.addOrigin(namespace, origin);
+    } catch (err) {
+      if (err instanceof OriginInUseError) return redirect(back, { err: "origin_in_use" });
+      throw err;
+    }
+    if (!added) return redirect(back, { err: "origin_exists" });
     await audit(session, "origin.add", namespace, origin);
     return redirect(back, { ok: "origin_added" });
   }

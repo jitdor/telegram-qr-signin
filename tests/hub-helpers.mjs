@@ -44,6 +44,17 @@ export function makeSite({ store, registry }, namespace, extra = {}) {
   });
 }
 
+/** A site that is not told its namespace and works it out from the URL each request arrives at. */
+export function makeDynamicSite({ store, registry }, extra = {}) {
+  return createSiteAuth({
+    botUsername: "hub_bot",
+    store,
+    registry,
+    session: { secret: "dynamic-site-secret-dynamic-site-00" },
+    ...extra,
+  });
+}
+
 /** Mints a QR on `site` as a real visit would: with the request, so the QR records where it was shown. */
 export function login(site, host = `https://${site.namespace}.example`) {
   return site.beginLogin({ request: makeRequest(`${host}/auth/login`) });

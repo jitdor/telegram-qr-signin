@@ -7,8 +7,10 @@
 //
 //   Sites     listNamespaces() · getNamespace(ns) · createNamespace({ namespace, name, origins, access?, createdBy })
 //             · updateNamespace(ns, { name?, enabled?, access? }) · deleteNamespace(ns)
-//   Origins   addOrigin(ns, url) · removeOrigin(ns, origin)        (a site's `origins` come back on
-//             every site record: the URLs it may be served from)
+//   Origins   addOrigin(ns, url) · removeOrigin(ns, origin) · namespacesForOrigin(origin)
+//             (a site's `origins` come back on every site record: the URLs it may be served from.
+//             An origin belongs to ONE site: giving it to a second throws OriginInUseError, and
+//             namespacesForOrigin is how a site finds its own namespace from the URL it is served at)
 //   Access    access(ns, userId) -> { exists, enabled, mode, origins, granted, blocked }
 //                                                                     (the one call a gate makes)
 //   Admins    listAdmins() · isAdmin(id) · addAdmin({ id, label, addedBy }) · removeAdmin(id)
@@ -24,6 +26,7 @@
 import {
   DEFAULT_ACCESS,
   MAX_ORIGINS,
+  OriginInUseError,
   assertAccessMode,
   assertOrigins,
   assertSiteNamespace,
@@ -83,6 +86,7 @@ export class MemoryHubStore {
     assertAccessMode(access);
     const bound = assertOrigins(origins);
     if (this.namespaces.has(namespace)) return false;
+    for (const origin of bound) this.#assertFree(origin, namespace);
     this.namespaces.set(namespace, {
       namespace,
       name: cleanName(name) || namespace,
@@ -114,9 +118,27 @@ export class MemoryHubStore {
     if (!origin) throw new Error("origin must be an https URL such as https://docs.example.com (http only for localhost)");
     const record = this.namespaces.get(namespace);
     if (!record || record.origins.includes(origin)) return false;
+    this.#assertFree(origin, namespace);
     if (record.origins.length >= MAX_ORIGINS) throw new Error(`a site can have at most ${MAX_ORIGINS} origins`);
     record.origins.push(origin);
     return true;
+  }
+
+  /**
+   * The sites whose origins include `url`: one, normally; none for an unregistered origin. More than
+   * one only if two admins gave the same URL to different sites at the same moment, which the caller
+   * must treat as "cannot tell" and refuse, never as "pick one".
+   */
+  async namespacesForOrigin(url) {
+    const origin = normalizeOrigin(url);
+    if (!origin) return [];
+    return [...this.namespaces.values()].filter((site) => site.origins.includes(origin)).map((site) => site.namespace).sort(compare);
+  }
+
+  #assertFree(origin, namespace) {
+    for (const site of this.namespaces.values()) {
+      if (site.namespace !== namespace && site.origins.includes(origin)) throw new OriginInUseError(origin, site.namespace);
+    }
   }
 
   /**

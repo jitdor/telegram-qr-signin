@@ -2,8 +2,9 @@
 // token, no webhook, no group id — the hub owns the bot, and who may enter is whoever the hub's
 // console has granted access to this site's namespace.
 //
-// Register the namespace in the console first (https://<hub>/admin → Add site → "docs", with the URL
-// this Worker is served from — the namespace works only from there).
+// Register this site in the console first (https://<hub>/admin → Add site, with the URL this Worker
+// is served from). There is nothing to copy into this file: the site works out which site it is from
+// the URL each request arrives at, and refuses to run anywhere that is not registered.
 //
 // Setup:
 //   wrangler secret put SESSION_SECRET      # this site's own; never shared with another site
@@ -17,7 +18,6 @@ import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
 export default {
   async fetch(request, env) {
     const auth = createSiteAuth({
-      namespace: "docs", // exactly the id registered in the console
       botUsername: env.TELEGRAM_BOT_USERNAME, // the QR points at the bot; the bot token is not needed here
       store: new KVLoginStore(env.LOGINS),
       registry: new D1HubStore(env.HUB_DB),

@@ -10,4 +10,4 @@ export { createSiteAuth } from "./site.js";
 export { hubGate, superAdminGate, parseRootAdmins } from "./gates.js";
 export { D1HubStore } from "./d1-store.js";
 export { MemoryHubStore } from "./store.js";
-export { ADMIN_NAMESPACE, NAMESPACE_RE, parseTelegramId, parseTelegramIds } from "./validate.js";
+export { ADMIN_NAMESPACE, NAMESPACE_RE, OriginInUseError, parseTelegramId, parseTelegramIds } from "./validate.js";

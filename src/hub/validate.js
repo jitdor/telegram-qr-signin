@@ -37,6 +37,21 @@ export function assertSiteNamespace(namespace) {
   return namespace;
 }
 
+/**
+ * Thrown when a URL is being given to a site but already belongs to another. An origin identifies
+ * exactly one site: a site finds its own namespace by looking its origin up, so two owners would
+ * leave it unable to tell which it is.
+ */
+export class OriginInUseError extends Error {
+  constructor(origin, owner) {
+    super(`${origin} is already registered to the site "${owner}"; a URL can belong to only one site`);
+    this.name = "OriginInUseError";
+    this.code = "origin_in_use";
+    this.origin = origin;
+    this.owner = owner;
+  }
+}
+
 /** How many URLs one site may be served from (a custom domain, a workers.dev address, a preview…). */
 export const MAX_ORIGINS = 10;
 

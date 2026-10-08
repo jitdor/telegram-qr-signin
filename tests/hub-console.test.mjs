@@ -950,3 +950,51 @@ test("a site named 'new' does not collide with the first step", async () => {
   assert.equal(step.status, 200);
   assert.equal(inputValue(await step.text(), "namespace"), "other");
 });
+
+// --- One URL, one site ---------------------------------------------------------------------------
+
+test("a URL that already belongs to another site is refused at every way in, and nothing is changed", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/ns", { namespace: "docs", name: "Docs", url: "https://docs.example" }, { cookie: ctx.cookie });
+  const audit = (await ctx.registry.listAudit()).length;
+
+  // Step one: caught before the confirmation page is even shown.
+  const step = await post(ctx.hub, "/admin/ns/new", { name: "Copy", url: "https://Acme.Example/other/path" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(step).searchParams.get("err"), "origin_in_use");
+
+  // The final save, posted directly (a stale page, or a race after step one).
+  const create = await post(ctx.hub, "/admin/ns", { namespace: "copy", name: "Copy", url: "https://acme.example" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(create).searchParams.get("err"), "origin_in_use");
+  assert.equal(await ctx.registry.getNamespace("copy"), null);
+
+  // Giving another site's URL to this one.
+  const add = await post(ctx.hub, "/admin/ns/docs/origins", { url: "https://acme.example" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(add).searchParams.get("err"), "origin_in_use");
+  assert.deepEqual((await ctx.registry.getNamespace("docs")).origins, ["https://docs.example"]);
+  assert.deepEqual((await ctx.registry.getNamespace("acme")).origins, ["https://acme.example"]);
+
+  assert.equal((await ctx.registry.listAudit()).length, audit, "refusals are not logged as changes");
+  const html = await (await get(ctx.hub, "/admin?err=origin_in_use", ctx.cookie)).text();
+  assert.match(html, /already belongs to another site/);
+});
+
+test("a URL becomes available the moment its site lets go of it", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  await ctx.registry.addOrigin("acme", "https://acme.workers.dev");
+  await post(ctx.hub, "/admin/ns/acme/origins/remove", { origin: "https://acme.workers.dev" }, { cookie: ctx.cookie });
+
+  const moved = await post(ctx.hub, "/admin/ns", { namespace: "next", name: "Next", url: "https://acme.workers.dev" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(moved).pathname, "/admin/ns/next");
+});
+
+test("the pages tell the operator the site's code needs no id", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", name: "Acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  const page = await (await get(ctx.hub, "/admin/ns/acme", ctx.cookie)).text();
+  assert.match(page, /does not need it/);
+  assert.doesNotMatch(page, /namespace: &quot;acme&quot;|namespace: "acme"/, "no instruction to hard-code the id");
+  const step = await (await post(ctx.hub, "/admin/ns/new", { name: "Docs", url: "https://docs.example" }, { cookie: ctx.cookie })).text();
+  assert.match(step, /does not need to know it/);
+});

@@ -10,6 +10,7 @@
 import {
   DEFAULT_ACCESS,
   MAX_ORIGINS,
+  OriginInUseError,
   assertAccessMode,
   assertOrigins,
   assertSiteNamespace,
@@ -74,6 +75,7 @@ export class D1HubStore {
     assertSiteNamespace(namespace);
     assertAccessMode(access);
     const bound = assertOrigins(origins);
+    for (const origin of bound) await this.#assertFree(origin, namespace);
     const res = await this.db
       .prepare(
         `INSERT INTO ${this.t.namespaces} (namespace, name, enabled, access, origins, created_at, created_by)
@@ -109,11 +111,38 @@ export class D1HubStore {
   async addOrigin(namespace, url) {
     const origin = normalizeOrigin(url);
     if (!origin) throw new Error("origin must be an https URL such as https://docs.example.com (http only for localhost)");
-    return this.#editOrigins(namespace, (list) => {
+    return this.#editOrigins(namespace, async (list) => {
       if (list.includes(origin)) return null;
+      await this.#assertFree(origin, namespace);
       if (list.length >= MAX_ORIGINS) throw new Error(`a site can have at most ${MAX_ORIGINS} origins`);
       return [...list, origin];
     });
+  }
+
+  /**
+   * The sites whose origins include `url` — normally one, none if unregistered. The match runs in
+   * SQL over each row's JSON list; a row whose JSON is damaged is skipped (and is shut anyway by the
+   * gate) instead of failing the lookup for every other site.
+   */
+  async namespacesForOrigin(url) {
+    const origin = normalizeOrigin(url);
+    if (!origin) return [];
+    const { results } = await this.db
+      .prepare(
+        `SELECT n.namespace FROM ${this.t.namespaces} n
+         WHERE CASE WHEN json_valid(n.origins)
+                    THEN EXISTS (SELECT 1 FROM json_each(n.origins) j WHERE j.value = ?1)
+                    ELSE 0 END
+         ORDER BY n.namespace LIMIT 5`
+      )
+      .bind(origin)
+      .all();
+    return results.map((row) => row.namespace);
+  }
+
+  async #assertFree(origin, namespace) {
+    const owner = (await this.namespacesForOrigin(origin)).find((ns) => ns !== namespace);
+    if (owner) throw new OriginInUseError(origin, owner);
   }
 
   /** See MemoryHubStore.removeOrigin: never removes a site's last origin. */
@@ -128,7 +157,7 @@ export class D1HubStore {
     for (let attempt = 0; attempt < 5; attempt++) {
       const row = await this.db.prepare(`SELECT origins FROM ${this.t.namespaces} WHERE namespace = ?1`).bind(namespace).first();
       if (!row) return false;
-      const next = change(parseOrigins(row.origins, { forEdit: true }));
+      const next = await change(parseOrigins(row.origins, { forEdit: true }));
       if (next === null) return false;
       const res = await this.db
         .prepare(`UPDATE ${this.t.namespaces} SET origins = ?3 WHERE namespace = ?1 AND origins = ?2`)

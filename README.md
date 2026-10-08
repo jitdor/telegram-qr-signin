@@ -115,33 +115,6 @@ It lands in `node_modules/telegram-qr-signin` and imports by that name either wa
 `src/` directory into your own repo is also a legitimate option: it is nine dependency-free ESM
 files with no build step, and that is partly the point.
 
-### Coming from `telegram-qr-auth`
-
-This package used to be called `telegram-qr-auth` (repo `jitdor/telegram-qr-auth`). Only the name
-changed. To move over:
-
-```bash
-npm uninstall telegram-qr-auth
-npm install github:jitdor/telegram-qr-signin
-```
-
-Then change your import paths: `"telegram-qr-auth"` becomes `"telegram-qr-signin"`, and so do the
-subpaths (`/do`, `/bot`, `/oidc`, `/stores`, `/gates`, `/qr`, `/session`). Also update any
-`wrangler d1 execute --file=node_modules/telegram-qr-auth/migrations/...` commands in your scripts.
-
-Everything else stays as it was, so a rename alone signs no one out and needs no redeploy of
-anything but your own code:
-
-- Exported names: `createTelegramQrAuth`, `defineQrAuthStorage` and the rest.
-- Session cookies and bearer assertions: the signing key label is still
-  `TelegramQrAuthSessionKey`, so existing sessions stay valid and the
-  [known-answer vector](#the-known-answer-vector) is unchanged.
-- The `X-Telegram-Qr-Auth` header on the sign-in page, which service workers check for.
-- Your Durable Object class and bindings, your KV, D1 and OIDC data.
-
-GitHub redirects the old repo URL, so an existing `github:jitdor/telegram-qr-auth` dependency keeps
-installing until you switch. It installs under the old name, though, so switch both together.
-
 ---
 
 ## Quickstart — Cloudflare Workers

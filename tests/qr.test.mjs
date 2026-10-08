@@ -344,3 +344,106 @@ test("a site's name and host are escaped", () => {
   assert.doesNotMatch(html, /<img src=x/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;&quot;/);
 });
+
+// --- The look of the sign-in page --------------------------------------------------------------------
+
+import { renderScanEndedPage, DEFAULT_BRANDING } from "../src/login-page.js";
+
+const BASE = { token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSvg: "<svg></svg>", pollPath: "/auth/poll" };
+
+test("the page shows how it works as a labelled list of three steps, in the app's own words if it has them", () => {
+  const html = renderLoginPage(BASE);
+  assert.match(html, /<ol class="tqa-steps" aria-label="How it works">\s*<li>Open Telegram<\/li>\s*<li>Press Start<\/li>\s*<li>You&#39;re in<\/li>\s*<\/ol>/);
+
+  const french = renderLoginPage({ ...BASE, branding: { stepsLabel: "Comment ça marche", stepOneText: "Ouvrez Telegram", stepTwoText: "Appuyez sur Démarrer", stepThreeText: "C'est fait" } });
+  assert.match(french, /aria-label="Comment ça marche"/);
+  assert.match(french, /<li>Ouvrez Telegram<\/li>\s*<li>Appuyez sur Démarrer<\/li>\s*<li>C&#39;est fait<\/li>/);
+});
+
+test("the steps follow the sign-in state through the attribute the poll script already sets", () => {
+  const html = renderLoginPage(BASE);
+  for (const state of ["waiting", "signed-in", "expired", "denied"]) assert.match(html, new RegExp(`\\[data-tqa-state="${state}"\\]`), state);
+  assert.match(html, /\.tqa-steps li::before\s*\{\s*content: "✓"|content: "✓"/);
+});
+
+test("the page has a tab icon in its own brand colours, as a data: URI so no /favicon.ico request is made", () => {
+  const html = renderLoginPage({ ...BASE, branding: { gradientFrom: "#ff0000", gradientTo: "#00ff00" } });
+  const href = html.match(/<link rel="icon" href="(data:image\/svg\+xml,[^"]+)">/)?.[1];
+  assert.ok(href, "an icon link");
+  const svg = decodeURIComponent(href.split(",")[1]);
+  assert.match(svg, /stop-color="#ff0000"/);
+  assert.match(svg, /stop-color="#00ff00"/);
+  assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+});
+
+test("an app that supplies its own icon keeps it, whichever way it writes the link", () => {
+  for (const headHtml of [`<link rel="icon" href="/mine.png">`, `<link rel='shortcut icon' href='/mine.ico'>`, `<link REL=icon href=/mine.svg>`]) {
+    const html = renderLoginPage({ ...BASE, branding: { headHtml } });
+    assert.equal((html.match(/<link rel="icon" href="data:/g) ?? []).length, 0, headHtml);
+    assert.ok(html.includes(headHtml));
+  }
+  assert.equal((renderLoginPage({ ...BASE, branding: { headHtml: `<link rel="stylesheet" href="/x.css">` } }).match(/<link rel="icon"/g) ?? []).length, 1, "an unrelated link does not count");
+});
+
+test("by default the page follows the visitor's light or dark setting; an app with its own background keeps a light card on it", () => {
+  const themed = renderLoginPage(BASE);
+  assert.match(themed, /<meta name="color-scheme" content="light dark">/);
+  assert.match(themed, /@media \(prefers-color-scheme: dark\)/);
+
+  const custom = renderLoginPage({ ...BASE, branding: { background: "#fff7ed" } });
+  assert.match(custom, /<meta name="color-scheme" content="light">/);
+  assert.doesNotMatch(custom, /@media \(prefers-color-scheme: dark\)/);
+  assert.match(custom, /--tqa-bg: #fff7ed;/);
+});
+
+test("text sits on a darkened brand gradient so it stays readable, whatever colours the app picks", () => {
+  const html = renderLoginPage({ ...BASE, branding: { gradientFrom: "#ffff00", gradientTo: "#00ffff" } });
+  assert.match(html, /--tqa-grad-ink: linear-gradient\(135deg, color-mix\(in srgb, var\(--tqa-a\) 72%, #000\), color-mix\(in srgb, var\(--tqa-b\) 82%, #000\)\)/);
+  assert.match(html, /\.tqa-open, \.tqa-retry \{[^}]*background: var\(--tqa-grad-ink\)/);
+  assert.match(html, /\.tqa-mark \{[^}]*background: var\(--tqa-grad-ink\)/);
+});
+
+test("the card is marked with the site's initials, the app's own logo, or Telegram's plane, in that order", () => {
+  assert.match(renderLoginPage({ ...BASE, site: { name: "Internal docs" } }), /<span class="tqa-mark" aria-hidden="true">ID<\/span>/);
+  assert.match(renderLoginPage({ ...BASE, site: { name: "Acme" } }), /aria-hidden="true">A<\/span>/);
+  assert.match(renderLoginPage({ ...BASE, site: { name: "!!!" } }), /<span class="tqa-mark" aria-hidden="true"><svg/, "no usable letters: the plane");
+  assert.match(renderLoginPage(BASE), /<span class="tqa-mark" aria-hidden="true"><svg/);
+  const logo = renderLoginPage({ ...BASE, site: { name: "Acme" }, branding: { logoHtml: '<img src="/logo.png" alt="">' } });
+  assert.match(logo, /<img src="\/logo.png" alt="">/);
+  assert.doesNotMatch(logo, /class="tqa-mark"/);
+});
+
+test("the page and the code-ended page make no request of their own: nothing external, and the only data: URIs are decoration", () => {
+  for (const html of [renderLoginPage({ ...BASE, site: { name: "Docs", host: "docs.example.com" } }), renderScanEndedPage({})]) {
+    const withoutDataUris = html.replace(/url\("data:[^"]*"\)/g, "").replace(/<link rel="icon" href="data:[^"]*">/, "");
+    assert.doesNotMatch(withoutDataUris, /https?:\/\//, "no absolute URL anywhere");
+    assert.doesNotMatch(html, /@import|@font-face|<img|<iframe|<link rel="stylesheet"/i);
+    assert.doesNotMatch(html, /<script src=/i);
+  }
+});
+
+test("motion is switched off for people who ask for less of it, and keyboard focus is always visible", () => {
+  const html = renderLoginPage(BASE);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(html, /a:focus-visible, button:focus-visible \{ outline: 3px solid/);
+  const reduced = html.match(/@media \(prefers-reduced-motion: reduce\) \{[^]*?\n  \}/)[0];
+  assert.match(reduced, /animation: none/);
+  assert.match(reduced, /transition: none/);
+});
+
+test("the code-ended page looks like the sign-in page it came from, in the app's words", () => {
+  const html = renderScanEndedPage({ branding: { scanEndedHeading: "Code expiré", scanEndedText: "Retournez sur votre ordinateur." } });
+  assert.match(html, /<h1>Code expiré<\/h1>/);
+  assert.match(html, /<p>Retournez sur votre ordinateur\.<\/p>/);
+  assert.match(html, /class="tqa-ended"/);
+  assert.match(html, /<meta name="color-scheme" content="light dark">/);
+  assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(html, /<meta name="robots" content="noindex, nofollow">/);
+  assert.match(renderScanEndedPage({ branding: { background: "#123456" } }), /<meta name="color-scheme" content="light">/);
+});
+
+test("every default string the new page uses can be overridden, and none is left out of DEFAULT_BRANDING", () => {
+  for (const key of ["stepsLabel", "stepOneText", "stepTwoText", "stepThreeText"]) assert.equal(typeof DEFAULT_BRANDING[key], "string", key);
+  const html = renderLoginPage({ ...BASE, branding: { subtitle: "S1", mobileSubtitle: "S2", orScanText: "S3", qrHintText: "S4", waitingText: "S5" } });
+  for (const text of ["S1", "S2", "S3", "S4", "S5"]) assert.ok(html.includes(`>${text}<`), text);
+});

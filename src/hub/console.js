@@ -16,6 +16,7 @@
 // never message text, so a crafted link cannot make the console say something it did not.
 
 import { escapeHtml as esc } from "../login-page.js";
+import { renderShell, icon, avatar, activityIcon } from "./console-ui.js";
 import { hmacSha256, toHex, timingSafeEqualHex } from "../crypto.js";
 import {
   ACCESS_MODES,
@@ -33,6 +34,17 @@ import {
 
 const MAX_IDS_PER_SUBMIT = 200;
 const AUDIT_ROWS_SHOWN = 40;
+
+// What the "Use it in your site" block shows: no id in it, because the site finds its own.
+const SITE_SNIPPET = `import { KVLoginStore } from "telegram-qr-signin";
+import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
+
+const auth = createSiteAuth({
+  botUsername: env.TELEGRAM_BOT_USERNAME,
+  store: new KVLoginStore(env.LOGINS),   // the hub's login store
+  registry: new D1HubStore(env.HUB_DB),  // the hub's database
+  session: { secret: env.SESSION_SECRET },
+});`;
 
 const OK_MESSAGES = {
   site_created: "Site added. Point its Worker at this namespace, then grant people access below.",
@@ -85,7 +97,8 @@ const ERR_MESSAGES = {
 const SECURITY_HEADERS = {
   "Content-Type": "text/html; charset=UTF-8",
   "Cache-Control": "no-store",
-  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  // img-src data: is for the tab icon, which is an inline SVG; nothing else loads an image.
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
   // NOT "no-referrer": browsers answer that policy by sending `Origin: null` on same-origin form
@@ -142,9 +155,10 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
     const isPost = request.method === "POST";
     if (!isRead && !isPost) return plain("Method not allowed", 405, { Allow: "GET, HEAD, POST" });
 
-    const ctx = { request, url, session, csrf: await csrfFor(session) };
+    const ctx = { request, url, session, csrf: await csrfFor(session), sites: [] };
 
     if (isRead) {
+      ctx.sites = await registry.listNamespaces(); // every page's sidebar lists the sites
       if (rest.length === 0) return dashboard(ctx);
       if (rest.length === 2 && rest[0] === "ns" && NAMESPACE_RE.test(rest[1])) return sitePage(ctx, rest[1]);
       return plain("Not found", 404);
@@ -200,55 +214,79 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
   // --- Pages -----------------------------------------------------------------------------------
 
   async function dashboard(ctx) {
-    const [sites, admins, log] = await Promise.all([registry.listNamespaces(), registry.listAdmins(), registry.listAudit({ limit: AUDIT_ROWS_SHOWN })]);
+    const sites = ctx.sites;
+    const [admins, log] = await Promise.all([registry.listAdmins(), registry.listAudit({ limit: AUDIT_ROWS_SHOWN })]);
     const adminRows = [
       ...[...roots].map((id) => ({ id, label: "", root: true })),
       ...admins.filter((a) => !roots.has(a.id)).map((a) => ({ ...a, root: false })),
     ];
+    const open = sites.filter((s) => s.access === "anyone").length;
+    const people = sites.reduce((n, s) => n + (s.access === "anyone" ? 0 : s.users), 0);
+    const waiting = sites.reduce((n, s) => n + (s.access === "anyone" ? 0 : s.requests), 0);
+
+    const stat = (tone, ic, value, label, note = "") =>
+      `<div class="stat ${tone}"><span class="ic">${icon(ic)}</span><b>${value}</b><span class="l">${label}${note ? ` <em>· ${note}</em>` : ""}</span></div>`;
 
     const body = `
+<header class="page-head">
+  <div><h1>Overview</h1><p class="sub">Who can sign in to which of your sites, in one place.</p></div>
+  <a class="btn primary" href="#add">${icon("plus")}Add site</a>
+</header>
 ${flash(ctx.url)}
-<section>
-  <h2>Sites</h2>
+<div class="stats">
+  ${stat("", "globe", sites.length, sites.length === 1 ? "Site" : "Sites", open ? `${open} open to anyone` : "")}
+  ${stat("ok", "users", people, "People with access")}
+  ${stat(waiting ? "warn" : "", "bell", waiting, "Waiting for approval")}
+  ${stat("violet", "shield", adminRows.length, adminRows.length === 1 ? "Super admin" : "Super admins")}
+</div>
+
+<section id="sites">
+  <h2>${icon("globe")}Sites <span class="count">${sites.length}</span></h2>
   <p class="lead">Each site is a namespace on this bot. A person can sign in to a site only if they are granted access to it here.</p>
   ${
     sites.length
-      ? `<div class="table-wrap"><table>
-    <thead><tr><th>Site</th><th>Namespace</th><th>Status</th><th class="num">People</th><th class="num">Waiting</th><th></th></tr></thead>
-    <tbody>${sites
-      .map(
-        (s) => `<tr>
-      <td><a href="${adminPath}/ns/${esc(s.namespace)}">${esc(s.name)}</a><br><span class="muted small">${esc(s.origins[0])}${s.origins.length > 1 ? ` +${s.origins.length - 1}` : ""}</span></td>
-      <td><code>${esc(s.namespace)}</code></td>
-      <td>${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}</td>
-      <td class="num">${s.access === "anyone" ? '<span class="pill warn">Anyone</span>' : s.users}</td>
-      <td class="num">${s.access === "anyone" ? "—" : s.requests ? `<span class="pill warn">${s.requests}</span>` : "0"}</td>
-      <td class="act"><a class="btn quiet" href="${adminPath}/ns/${esc(s.namespace)}">Manage</a></td>
-    </tr>`
-      )
-      .join("")}</tbody></table></div>`
-      : '<p class="empty">No sites yet. Add the first one below.</p>'
+      ? `<div class="site-list">${sites
+          .map(
+            (s) => `<a class="site" href="${adminPath}/ns/${esc(s.namespace)}">
+      ${avatar(s.name, s.namespace)}
+      <span class="site-main"><strong>${esc(s.name)}</strong><span class="host">${esc(s.origins[0])}${s.origins.length > 1 ? ` +${s.origins.length - 1}` : ""}</span></span>
+      <span class="site-side">
+        <span class="site-badges">${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}${s.access === "anyone" ? '<span class="pill warn">Anyone</span>' : ""}</span>
+        ${
+          s.access === "anyone"
+            ? ""
+            : `<span class="site-nums"><span><b>${s.users}</b><small>people</small></span><span><b>${s.requests ? `<span class="pill warn">${s.requests}</span>` : 0}</b><small>waiting</small></span></span>`
+        }
+      </span>
+      ${icon("chevron", "i go")}
+    </a>`
+          )
+          .join("")}</div>`
+      : `<div class="empty">${icon("globe")}<span>No sites yet. Add the first one below.</span></div>`
   }
-  ${postForm(ctx, `${adminPath}/ns/new`, `
+  <div class="add-site" id="add">
+    <h3 class="card-h">${icon("plus")}Add a site</h3>
+    ${postForm(ctx, `${adminPath}/ns/new`, `
     <div class="row">
       <label>Display name<input name="name" maxlength="60" placeholder="Acme dashboard" autocomplete="off"></label>
-      <label>Site URL<input name="url" required maxlength="200" placeholder="https://acme.example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>
+      <label class="grow">Site URL<input name="url" required maxlength="200" placeholder="https://acme.example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>
       <button class="btn primary">Continue</button>
     </div>
     <p class="hint">Next you will confirm the site's id, which is suggested from these and can be changed before you save.</p>`)}
+  </div>
 </section>
 
-<section>
-  <h2>Super admins</h2>
+<section id="admins">
+  <h2>${icon("shield")}Super admins <span class="count">${adminRows.length}</span></h2>
   <p class="lead">Can use this console: add sites, grant and revoke access, and add other super admins. Being a super admin does not by itself let you into any site.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>Telegram id</th><th>Note</th><th>Source</th><th></th></tr></thead>
+    <thead><tr><th>Telegram id</th><th>Note</th><th class="hide-sm">Source</th><th></th></tr></thead>
     <tbody>${adminRows
       .map(
         (a) => `<tr>
-      <td><code>${a.id}</code>${a.id === Number(ctx.session.id) ? ' <span class="pill">you</span>' : ""}</td>
+      <td><div class="who">${avatar(a.label || String(a.id), a.id, "sm")}<span><code>${a.id}</code>${a.id === Number(ctx.session.id) ? ' <span class="pill">you</span>' : ""}</span></div></td>
       <td>${esc(a.label)}</td>
-      <td>${a.root ? "Hub configuration" : `Console${a.addedBy ? `, added by <code>${a.addedBy}</code>` : ""}`}</td>
+      <td class="hide-sm">${a.root ? "Hub configuration" : `Console${a.addedBy ? `, added by <code>${a.addedBy}</code>` : ""}`}</td>
       <td class="act">${
         a.root || a.id === Number(ctx.session.id)
           ? ""
@@ -260,21 +298,22 @@ ${flash(ctx.url)}
   ${postForm(ctx, `${adminPath}/admins`, `
     <div class="row">
       <label>Telegram user id<input name="id" required inputmode="numeric" pattern="[0-9]{1,15}" placeholder="123456789" autocomplete="off"></label>
-      <label>Note<input name="label" maxlength="80" placeholder="Who is this?" autocomplete="off"></label>
+      <label class="grow">Note<input name="label" maxlength="80" placeholder="Who is this?" autocomplete="off"></label>
       <button class="btn primary">Add super admin</button>
     </div>`)}
 </section>
 
-<section>
-  <h2>Recent activity</h2>
-  ${auditTable(log)}
+<section id="activity">
+  <h2>${icon("activity")}Recent activity</h2>
+  <p class="lead">Every change made in this console.</p>
+  ${auditFeed(log)}
 </section>`;
-    return page("Hub admin", body, ctx);
+    return page("Overview", body, ctx);
   }
 
   async function sitePage(ctx, namespace) {
     const site = await registry.getNamespace(namespace);
-    if (!site) return page("Not found", `<p class="empty">That site does not exist. <a href="${adminPath}">Back to all sites</a>.</p>`, ctx, 404);
+    if (!site) return page("Not found", `<div class="empty">${icon("alert")}<span>That site does not exist. <a href="${adminPath}">Back to all sites</a>.</span></div>`, ctx, 404);
     const open = site.access === "anyone";
     const [grants, blocks, requests] = await Promise.all([
       registry.listGrants(namespace),
@@ -282,24 +321,56 @@ ${flash(ctx.url)}
       open ? [] : registry.listRequests(namespace), // an open site has nobody to approve
     ]);
     const base = `${adminPath}/ns/${namespace}`; // namespace already matched NAMESPACE_RE
+    const hostOf = (origin) => origin.replace(/^https?:\/\//, "");
+    const statusPill = site.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>';
+    const personName = (r) => describeUser({ first_name: r.firstName, last_name: r.lastName, username: r.username });
 
     const body = `
 <p class="crumb"><a href="${adminPath}">&larr; All sites</a></p>
 ${flash(ctx.url)}
-<section>
-  <h2>${esc(site.name)} ${site.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}</h2>
-  <p class="lead">Id <code>${esc(namespace)}</code>. The site's code does not need it: <code>createSiteAuth({ registry, store, botUsername, session })</code> finds this site from the URL it is served at.</p>
+<header class="site-head">
+  ${avatar(site.name, namespace, "lg")}
+  <div>
+    <h1>${esc(site.name)} ${statusPill}${open ? '<span class="pill warn">Anyone with Telegram</span>' : ""}</h1>
+    <div class="chips">${site.origins.map((o) => `<span class="chip">${icon("lock")}${esc(hostOf(o))}</span>`).join("")}</div>
+  </div>
+</header>
+
+<nav class="subnav" aria-label="This site">
+  <a href="#settings">${icon("settings")}Settings</a>
+  <a href="#urls">${icon("link")}URLs</a>
+  <a href="#access">${icon(open ? "unlock" : "lock")}Access</a>
+  ${requests.length ? `<a href="#waiting">${icon("bell")}Waiting <span class="n warn">${requests.length}</span></a>` : ""}
+  <a href="#people">${icon("users")}People <span class="n">${grants.length}</span></a>
+  <a href="#blocked">${icon("ban")}Blocked <span class="n">${blocks.length}</span></a>
+  <a href="#delete">${icon("trash")}Delete</a>
+</nav>
+
+<div class="cols">
+  <div class="mini"><b>${open ? "Anyone" : grants.length}</b><span>${open ? "can sign in" : "people with access"}</span></div>
+  <div class="mini"><b>${open ? "—" : requests.length}</b><span>waiting for approval</span></div>
+  <div class="mini"><b>${blocks.length}</b><span>blocked</span></div>
+  <div class="mini"><b>${site.origins.length}</b><span>${site.origins.length === 1 ? "URL" : "URLs"}</span></div>
+</div>
+
+<section id="settings">
+  <h2>${icon("settings")}Settings</h2>
+  <p class="lead">Id <code>${esc(namespace)}</code>. The site's code does not need it: it finds this site from the URL it is served at.</p>
   ${postForm(ctx, `${base}/update`, `
     <div class="row">
-      <label>Display name<input name="name" value="${esc(site.name)}" required maxlength="60" autocomplete="off"></label>
+      <label class="grow">Display name<input name="name" value="${esc(site.name)}" required maxlength="60" autocomplete="off"></label>
       <label class="check"><input type="checkbox" name="enabled" value="1"${site.enabled ? " checked" : ""}> Sign-in enabled</label>
       <button class="btn primary">Save</button>
     </div>
     <p class="hint">Switching a site off locks everyone out of it on their next request. Their access is kept for when you switch it back on.</p>`)}
+  <details class="snippet">
+    <summary>${icon("code")}Use it in your site</summary>
+    <pre class="code">${esc(SITE_SNIPPET)}</pre>
+  </details>
 </section>
 
-<section>
-  <h2>Site URLs <span class="count">${site.origins.length}</span></h2>
+<section id="urls">
+  <h2>${icon("link")}Site URLs <span class="count">${site.origins.length}</span></h2>
   <p class="lead">The site finds its own id from the address it is reached at, so each URL can belong to only one site, and a visitor reaching the site at any other address is refused, as is a QR code shown anywhere else. Use the address as it appears in the browser, for example both your custom domain and its <code>workers.dev</code> address if people can reach either.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Origin</th><th></th></tr></thead>
@@ -325,16 +396,16 @@ ${flash(ctx.url)}
 
 ${
   open
-    ? `<section class="warn-zone">
-  <h2>Who can sign in <span class="pill warn">Anyone with Telegram</span></h2>
+    ? `<section id="access" class="warn-zone">
+  <h2>${icon("unlock")}Who can sign in <span class="pill warn">Anyone with Telegram</span></h2>
   <p class="lead">Any Telegram account can sign in to this site unless it is blocked below. This site is responsible for its own accounts and moderation: the hub only proves who someone is.</p>
   ${postForm(ctx, `${base}/access`, `
     <input type="hidden" name="mode" value="granted">
     <div class="row"><button class="btn primary">Require approval again</button></div>
     <p class="hint">People without a grant are locked out on their next request. Grants made earlier are still there.</p>`)}
 </section>`
-    : `<section>
-  <h2>Who can sign in <span class="pill">Approved people only</span></h2>
+    : `<section id="access">
+  <h2>${icon("lock")}Who can sign in <span class="pill">Approved people only</span></h2>
   <p class="lead">Only the people you grant access to below can sign in to this site.</p>
   <div class="callout">
     <strong>Open this site to anyone with a Telegram account</strong>
@@ -356,21 +427,21 @@ ${
 
 ${
   requests.length
-    ? `<section>
-  <h2>Waiting for approval <span class="pill warn">${requests.length}</span></h2>
+    ? `<section id="waiting">
+  <h2>${icon("bell")}Waiting for approval <span class="pill warn">${requests.length}</span></h2>
   <p class="lead">These people scanned this site's QR code and were turned away. Approve to grant access, dismiss to forget the request, or block to refuse them for good.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>Person</th><th>Telegram id</th><th class="num">Tries</th><th>Last seen</th><th></th></tr></thead>
+    <thead><tr><th>Person</th><th>Telegram id</th><th class="num hide-sm">Tries</th><th class="hide-sm">Last seen</th><th></th></tr></thead>
     <tbody>${requests
       .map((r) => {
-        const who = describeUser({ first_name: r.firstName, last_name: r.lastName, username: r.username });
+        const who = personName(r);
         return `<tr>
-      <td>${who ? esc(who) : '<span class="muted">no name</span>'}</td>
+      <td><div class="who">${avatar(who || String(r.id), r.id, "sm")}<span>${who ? esc(who) : '<span class="muted">no name</span>'}</span></div></td>
       <td><code>${r.id}</code></td>
-      <td class="num">${r.attempts}</td>
-      <td>${when(r.lastSeen)}</td>
+      <td class="num hide-sm">${r.attempts}</td>
+      <td class="hide-sm">${when(r.lastSeen)}</td>
       <td class="act">
-        ${postForm(ctx, `${base}/requests/${r.id}/approve`, '<button class="btn primary">Approve</button>', "inline")}
+        ${postForm(ctx, `${base}/requests/${r.id}/approve`, `<button class="btn primary">${icon("check")}Approve</button>`, "inline")}
         ${postForm(ctx, `${base}/requests/${r.id}/dismiss`, '<button class="btn quiet">Dismiss</button>', "inline")}
         ${postForm(ctx, `${base}/requests/${r.id}/block`, '<button class="btn danger">Block</button>', "inline")}
       </td></tr>`;
@@ -380,8 +451,8 @@ ${
     : ""
 }
 
-<section>
-  <h2>People with access <span class="count">${grants.length}${grants.length >= 500 ? "+" : ""}</span></h2>
+<section id="people">
+  <h2>${icon("users")}People with access <span class="count">${grants.length}${grants.length >= 500 ? "+" : ""}</span></h2>
   ${open ? '<p class="lead">Not used while this site is open to anyone. Kept in case you require approval again.</p>' : ""}
   ${postForm(ctx, `${base}/grants`, `
     <div class="row">
@@ -393,23 +464,23 @@ ${
   ${
     grants.length
       ? `<div class="table-wrap"><table>
-    <thead><tr><th>Telegram id</th><th>Note</th><th>Added</th><th></th></tr></thead>
+    <thead><tr><th>Telegram id</th><th>Note</th><th class="hide-sm">Added</th><th></th></tr></thead>
     <tbody>${grants
       .map(
         (g) => `<tr>
-      <td><code>${g.id}</code></td>
+      <td><div class="who">${avatar(g.label || String(g.id), g.id, "sm")}<code>${g.id}</code></div></td>
       <td>${esc(g.label)}</td>
-      <td>${when(g.addedAt)}${g.addedBy ? ` by <code>${g.addedBy}</code>` : ""}</td>
+      <td class="hide-sm">${when(g.addedAt)}${g.addedBy ? ` by <code>${g.addedBy}</code>` : ""}</td>
       <td class="act">${postForm(ctx, `${base}/grants/${g.id}/remove`, '<button class="btn danger">Revoke</button>', "inline")}</td>
     </tr>`
       )
       .join("")}</tbody></table></div>`
-      : '<p class="empty">Nobody can sign in to this site yet.</p>'
+      : `<div class="empty">${icon("inbox")}<span>Nobody can sign in to this site yet.</span></div>`
   }
 </section>
 
-<section>
-  <h2>Blocked people <span class="count">${blocks.length}${blocks.length >= 500 ? "+" : ""}</span></h2>
+<section id="blocked">
+  <h2>${icon("ban")}Blocked people <span class="count">${blocks.length}${blocks.length >= 500 ? "+" : ""}</span></h2>
   <p class="lead">Refused by this site whatever else is true of them: even with a grant, and even while the site is open to anyone. It applies on their next request.</p>
   ${postForm(ctx, `${base}/blocks`, `
     <div class="row">
@@ -421,23 +492,23 @@ ${
   ${
     blocks.length
       ? `<div class="table-wrap"><table>
-    <thead><tr><th>Telegram id</th><th>Note</th><th>Blocked</th><th></th></tr></thead>
+    <thead><tr><th>Telegram id</th><th>Note</th><th class="hide-sm">Blocked</th><th></th></tr></thead>
     <tbody>${blocks
       .map(
         (b) => `<tr>
-      <td><code>${b.id}</code></td>
+      <td><div class="who">${avatar(b.label || String(b.id), b.id, "sm")}<code>${b.id}</code></div></td>
       <td>${esc(b.label)}</td>
-      <td>${when(b.addedAt)}${b.addedBy ? ` by <code>${b.addedBy}</code>` : ""}</td>
+      <td class="hide-sm">${when(b.addedAt)}${b.addedBy ? ` by <code>${b.addedBy}</code>` : ""}</td>
       <td class="act">${postForm(ctx, `${base}/blocks/${b.id}/remove`, '<button class="btn quiet">Unblock</button>', "inline")}</td>
     </tr>`
       )
       .join("")}</tbody></table></div>`
-      : '<p class="empty">Nobody is blocked.</p>'
+      : `<div class="empty">${icon("check")}<span>Nobody is blocked.</span></div>`
   }
 </section>
 
-<section class="danger-zone">
-  <h2>Delete this site</h2>
+<section id="delete" class="danger-zone">
+  <h2>${icon("trash")}Delete this site</h2>
   <p class="lead">Removes the site, its grants and its block list. The site's Worker will refuse every sign-in until you add the namespace again.</p>
   ${postForm(ctx, `${base}/delete`, `
     <div class="row">
@@ -445,7 +516,7 @@ ${
       <button class="btn danger">Delete site</button>
     </div>`)}
 </section>`;
-    return page(site.name, body, ctx);
+    return page(site.name, body, ctx, 200, namespace);
   }
 
   // --- Actions ---------------------------------------------------------------------------------
@@ -461,13 +532,14 @@ ${
     if (!origin) return redirect(adminPath, { err: "bad_url" });
     if ((await registry.namespacesForOrigin(origin)).length) return redirect(adminPath, { err: "origin_in_use" });
     const name = cleanName(ctx.form.get("name"));
-    const taken = (await registry.listNamespaces()).map((site) => site.namespace);
-    const namespace = suggestNamespace({ name, url: origin }, taken);
+    const sites = await registry.listNamespaces();
+    const namespace = suggestNamespace({ name, url: origin }, sites.map((site) => site.namespace));
 
+    ctx.sites = sites;
     const body = `
 <p class="crumb"><a href="${adminPath}">&larr; All sites</a></p>
 <section>
-  <h2>Add a site</h2>
+  <h2>${icon("plus")}Add a site</h2>
   <p class="lead">Check the id before saving. It identifies this site in the QR code and in its stored access list, and it cannot be changed afterwards.</p>
   ${postForm(ctx, `${adminPath}/ns`, `
     <div class="row">
@@ -681,24 +753,8 @@ ${
 
   // --- Rendering -------------------------------------------------------------------------------
 
-  function page(title, body, ctx, status = 200) {
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>${esc(title)} · Hub admin</title>
-<style>${STYLES}</style>
-</head>
-<body>
-<header class="bar">
-  <a class="brand" href="${adminPath}">Hub admin</a>
-  <span class="who">${esc(ctx.session.name)} <span class="muted">· ${esc(ctx.session.id)}</span> · <a href="${adminPath}/auth/logout">Sign out</a></span>
-</header>
-<main>${body}</main>
-</body>
-</html>`;
+  function page(title, body, ctx, status = 200, active = "overview") {
+    const html = renderShell({ title, body, adminPath, session: ctx.session, sites: ctx.sites ?? [], active });
     return new Response(ctx.request.method === "HEAD" ? null : html, { status, headers: SECURITY_HEADERS });
   }
 
@@ -711,23 +767,26 @@ ${
     const ok = url.searchParams.get("ok");
     const err = url.searchParams.get("err");
     const n = Math.min(Number(url.searchParams.get("n")) || 0, 100000);
-    if (err && Object.hasOwn(ERR_MESSAGES, err)) return `<p class="flash bad" role="alert">${esc(ERR_MESSAGES[err])}</p>`;
+    if (err && Object.hasOwn(ERR_MESSAGES, err)) return `<p class="flash bad" role="alert">${icon("alert")}<span>${esc(ERR_MESSAGES[err])}</span></p>`;
     if (ok && Object.hasOwn(OK_MESSAGES, ok)) {
       const message = OK_MESSAGES[ok];
-      return `<p class="flash good" role="status">${esc(typeof message === "function" ? message(n) : message)}</p>`;
+      return `<p class="flash good" role="status">${icon("check")}<span>${esc(typeof message === "function" ? message(n) : message)}</span></p>`;
     }
     return "";
   }
 
-  function auditTable(log) {
-    if (!log.length) return '<p class="empty">Nothing yet.</p>';
-    return `<div class="table-wrap"><table>
-    <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
-    <tbody>${log
+  function auditFeed(log) {
+    if (!log.length) return `<div class="empty">${icon("activity")}<span>Nothing yet.</span></div>`;
+    return `<ol class="feed">${log
       .map(
-        (e) => `<tr><td>${when(e.at)}</td><td><code>${e.actor ?? "—"}</code></td><td><code>${esc(e.action)}</code></td><td>${esc(e.target)}</td><td>${esc(e.detail)}</td></tr>`
+        (e) => `<li>
+      <span class="ic">${icon(activityIcon(e.action))}</span>
+      <div><span class="what"><strong><code>${esc(e.action)}</code></strong>${e.target ? ` on <strong>${esc(e.target)}</strong>` : ""}</span>
+        <span class="meta">by <code>${e.actor ?? "—"}</code></span>${e.detail ? `<span class="meta feed-detail">${esc(e.detail)}</span>` : ""}</div>
+      ${when(e.at)}
+    </li>`
       )
-      .join("")}</tbody></table></div>`;
+      .join("")}</ol>`;
   }
 
   function redirect(location, params = {}) {
@@ -762,60 +821,3 @@ function when(seconds) {
 function defaultOnError(err) {
   console.error("telegram-qr-signin/hub: console error", err);
 }
-
-const STYLES = `
-:root{color-scheme:light dark;--bg:#f5f6f9;--card:#fff;--ink:#141a29;--muted:#667085;--rule:#e3e7ee;--accent:#2563eb;--accent-ink:#fff;--good:#177245;--good-bg:#e6f5ec;--bad:#b3261e;--bad-bg:#fdeceb;--warn:#8a5a00;--warn-bg:#fff3d6;--code:#eef1f6;--font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1420;--card:#161e2e;--ink:#e8ecf4;--muted:#93a0b8;--rule:#27324a;--accent:#5b8cff;--accent-ink:#0b1020;--good:#5fd39a;--good-bg:#12301f;--bad:#ff8a80;--bad-bg:#3a1714;--warn:#f1c25c;--warn-bg:#35290a;--code:#1f2940}}
-*,*::before,*::after{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--font);-webkit-font-smoothing:antialiased}
-a{color:var(--accent)}
-code{background:var(--code);padding:.08em .38em;border-radius:5px;font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}
-.bar{display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;align-items:center;padding:12px max(16px,calc((100% - 62rem)/2));background:var(--card);border-bottom:1px solid var(--rule)}
-.brand{font-weight:700;text-decoration:none;color:var(--ink);letter-spacing:-.01em}
-.who{color:var(--muted);font-size:.88rem}
-main{max-width:62rem;margin:0 auto;padding:20px 16px 64px}
-section{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:20px;margin:0 0 18px}
-h2{margin:0 0 4px;font-size:1.1rem;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.lead{margin:0 0 14px;color:var(--muted);font-size:.9rem}
-.hint+.row{margin-top:14px}
-.hint{margin:8px 0 0;color:var(--muted);font-size:.82rem}
-.crumb{margin:0 0 12px;font-size:.9rem}
-.muted{color:var(--muted)}
-.empty{color:var(--muted);margin:8px 0 14px}
-.count{color:var(--muted);font-weight:400;font-size:.9rem}
-.table-wrap{overflow-x:auto;margin:0 -4px 14px}
-table{width:100%;border-collapse:collapse;font-size:.9rem}
-th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--rule);vertical-align:middle}
-th{color:var(--muted);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}
-tr:last-child td{border-bottom:0}
-td code{white-space:nowrap;word-break:normal}
-.num{text-align:right;font-variant-numeric:tabular-nums}
-.act{text-align:right;white-space:nowrap}
-.act form.inline{display:inline;margin:0 0 0 6px}
-.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
-label{display:flex;flex-direction:column;gap:4px;font-size:.82rem;color:var(--muted);font-weight:600}
-label.grow{flex:1 1 16rem}
-label.check{flex-direction:row;align-items:center;gap:8px;color:var(--ink);font-weight:500;font-size:.92rem;padding-bottom:9px}
-input[type=text],input:not([type]),input[type=search],textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--rule);border-radius:9px;padding:8px 10px;min-width:12rem;width:100%}
-::placeholder{color:var(--muted);opacity:.55}
-textarea{resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88rem}
-input:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
-.btn{display:inline-block;font:600 .88rem/1 var(--font);padding:10px 14px;border-radius:9px;border:1px solid var(--rule);background:var(--card);color:var(--ink);cursor:pointer;text-decoration:none}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--rule))}
-.btn.quiet{color:var(--muted)}
-.pill{display:inline-block;font:600 .72rem/1 var(--font);padding:4px 8px;border-radius:99px;background:var(--code);color:var(--muted)}
-.pill.on{background:var(--good-bg);color:var(--good)}
-.pill.off{background:var(--bad-bg);color:var(--bad)}
-.pill.warn{background:var(--warn-bg);color:var(--warn)}
-.flash{margin:0 0 16px;padding:11px 14px;border-radius:10px;font-size:.92rem}
-.flash.good{background:var(--good-bg);color:var(--good)}
-.flash.bad{background:var(--bad-bg);color:var(--bad)}
-.warn-zone{border-color:color-mix(in srgb,var(--warn) 45%,var(--rule));background:color-mix(in srgb,var(--warn-bg) 35%,var(--card))}
-.small{font-size:.8rem}
-.callout{border:1px dashed var(--rule);border-radius:12px;padding:14px 16px}
-.callout strong{display:block;margin-bottom:2px}
-.callout ul{margin:4px 0 12px;padding-left:1.2rem}
-.danger-zone{border-color:color-mix(in srgb,var(--bad) 35%,var(--rule))}
-@media (max-width:560px){input[type=text],input:not([type]){min-width:0}.row>label{flex:1 1 100%}}
-`;

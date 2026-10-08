@@ -19,6 +19,20 @@ No phone number. No login code. No password. No form fields at all — the sign-
 Zero dependencies. One file per concern, no build step. Runs on Cloudflare Workers, Deno, Bun and
 Node 22.13+.
 
+<p align="center">
+  <img src="docs/img/signin-dark.png" alt="The sign-in page in dark mode: a card with the site's name and domain, a framed QR code, and three steps" width="300">
+  &nbsp;
+  <img src="docs/img/signin-phone.png" alt="The same page on a phone in light mode, leading with an Open Telegram button" width="230">
+</p>
+
+The sign-in page follows the visitor's light or dark setting, leads with a button on phones, and
+shows the site's name and domain so people can see where they are signing in. With the optional
+[hub](#one-bot-many-sites-the-hub) there is also an admin console:
+
+<p align="center">
+  <img src="docs/img/console-overview.png" alt="The admin console's overview: sites with their status, people and pending requests" width="720">
+</p>
+
 ---
 
 ## Why not Telegram's Login Widget
@@ -443,7 +457,12 @@ to check it behaves.
 
 ## Theming
 
-Restyle the built-in page:
+The built-in page needs no styling to look right: it follows the visitor's light or dark setting,
+marks the card with the site's initials (or your logo), shows the site's domain as a chip, and
+walks through the three steps as the sign-in progresses. It makes no request of its own: no fonts,
+no images, no scripts from anywhere else, and its tab icon is inline.
+
+Restyle it:
 
 ```js
 branding: {
@@ -458,6 +477,13 @@ branding: {
   botSuccessText: "✅ You're in — back to your browser.",
 }
 ```
+
+Setting your own `background` keeps a light card on that colour instead of following the visitor's
+theme, since a dark card could not promise to stay readable on a colour it did not choose. Where
+white text sits on your brand colours (the mark, the buttons, the ticks) they are darkened slightly
+so it stays legible whatever you pick; glows and lines use them as given. A `<link rel="icon">` in
+`headHtml` replaces the built-in tab icon. The steps' wording is `stepsLabel`, `stepOneText`,
+`stepTwoText` and `stepThreeText`. Motion is switched off for visitors who ask for less of it.
 
 **The QR is always an https link.** The QR image encodes the `https://t.me/<bot>?start=…` deep
 link, or with `qrOrigin` set an address on your own domain that redirects to it (see

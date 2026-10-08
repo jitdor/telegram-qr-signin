@@ -110,6 +110,28 @@ it is ANDed with the hub's check.
 
 Server-rendered, no JavaScript, no external requests. Everything is behind the same QR sign-in.
 
+<p align="center">
+  <img src="img/console-overview.png" alt="The overview: stat cards, then one card per site with its status, people and pending requests" width="760">
+</p>
+
+- **Overview** — four numbers at the top (sites, people with access, waiting for approval, super
+  admins), a card per site with its URL, status, mode and counts, the add-site form, the super
+  admins, and a timeline of everything that was changed and by whom.
+- **A site's page** — a header with its name, status and domains; a bar to jump to Settings, URLs,
+  Access, Waiting, People, Blocked or Delete (it stays in view as you scroll); small totals; and the
+  sections themselves. "Use it in your site" opens the code a site needs, which contains no id.
+- **The sidebar** lists your sites with a dot for on or off and a badge for people waiting, so you can
+  move between them without going back.
+- **On a phone** the sidebar becomes a top bar and tables become stacked rows, with the buttons under
+  what they act on instead of clipped off the edge.
+- **Light and dark** follow the system setting; there is no toggle to find. Keyboard focus is always
+  visible, there is a skip link, the current page is marked for screen readers, and motion is
+  switched off for anyone who asks for less of it. Text meets WCAG AA contrast in both themes.
+
+<p align="center">
+  <img src="img/console-site.png" alt="A site's page in light mode, with its header, section bar, totals and settings" width="760">
+</p>
+
 | Area | What a super admin can do |
 | --- | --- |
 | **Sites** | Add a site (display name and the URL it is served from, then confirm its suggested id), rename it, switch sign-in off and on, delete it |

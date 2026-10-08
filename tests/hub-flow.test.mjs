@@ -545,7 +545,7 @@ test("custom paths are honoured end to end", async () => {
   })();
   const page = await ctx.hub.fetch(makeRequest(`${ORIGIN}/ops/console`, { cookie }));
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /action="\/ops\/console\/ns"/);
+  assert.match(await page.text(), /action="\/ops\/console\/ns\/new"/);
   assert.equal((await ctx.hub.fetch(makeRequest(`${ORIGIN}/telegram/webhook`))).status, 404);
   assert.equal((await ctx.hub.fetch(new Request(`${ORIGIN}/tg`, { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "whsec" }, body: "{}" }))).status, 200);
 });

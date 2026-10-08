@@ -854,3 +854,99 @@ test("end to end: a site added in the console works from its URL and from nowher
   assert.match(lastReply(ctx.telegram), /isn't registered for Docs/);
   assert.equal((await ctx.store.get(fake.token, "docs")).status, "pending");
 });
+
+// --- Adding a site in two steps, with a suggested id the admin can change -----------------------
+
+const inputValue = (html, name) => html.match(new RegExp(`<input name="${name}" value="([^"]*)"`))?.[1];
+
+test("adding a site starts with a name and a URL only, and the id is not asked for yet", async () => {
+  const ctx = await setup();
+  const html = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
+  assert.match(html, new RegExp(`action="/admin/ns/new"`));
+  assert.doesNotMatch(html, /<input name="namespace"/, "no id box on the first step");
+  assert.match(html, />Continue<\/button>/);
+});
+
+test("step one shows a confirmation page with a suggested, editable id, and saves nothing", async () => {
+  const ctx = await setup();
+  const before = (await ctx.registry.listAudit()).length;
+  const response = await post(ctx.hub, "/admin/ns/new", { name: "Internal docs", url: "https://Docs.Example.com/login" }, { cookie: ctx.cookie });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+
+  assert.equal(inputValue(html, "namespace"), "internal-docs", "suggested from the display name");
+  assert.equal(inputValue(html, "name"), "Internal docs");
+  assert.equal(inputValue(html, "url"), "https://docs.example.com", "shown as the origin that will be bound");
+  assert.match(html, /action="\/admin\/ns"/, "the final save is the ordinary create");
+  assert.match(html, /name="csrf" value="[0-9a-f]+"/);
+  assert.match(html, /cannot be changed afterwards/);
+
+  assert.deepEqual(await ctx.registry.listNamespaces(), [], "nothing is created until the admin confirms");
+  assert.equal((await ctx.registry.listAudit()).length, before);
+});
+
+test("with no display name the id is suggested from the URL; a taken id gets a suffix", async () => {
+  const ctx = await setup();
+  const first = await (await post(ctx.hub, "/admin/ns/new", { name: "", url: "https://docs.example.com" }, { cookie: ctx.cookie })).text();
+  assert.equal(inputValue(first, "namespace"), "docs");
+  assert.match(first, /Suggested from the URL/);
+
+  await post(ctx.hub, "/admin/ns", { namespace: "docs", name: "Docs", url: "https://docs.example.com" }, { cookie: ctx.cookie });
+  const second = await (await post(ctx.hub, "/admin/ns/new", { name: "Docs", url: "https://other.example.com" }, { cookie: ctx.cookie })).text();
+  assert.equal(inputValue(second, "namespace"), "docs-2");
+});
+
+test("the admin can rename the suggestion before saving, and the id they chose is the one that is saved", async () => {
+  const ctx = await setup();
+  const preview = await (await post(ctx.hub, "/admin/ns/new", { name: "Internal docs", url: "https://docs.example.com" }, { cookie: ctx.cookie })).text();
+  assert.equal(inputValue(preview, "namespace"), "internal-docs");
+
+  // What the browser submits after the admin changes the id box.
+  const saved = await post(ctx.hub, "/admin/ns", { namespace: "docs", name: inputValue(preview, "name"), url: inputValue(preview, "url") }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(saved).pathname, "/admin/ns/docs");
+  assert.ok(await ctx.registry.getNamespace("docs"));
+  assert.equal(await ctx.registry.getNamespace("internal-docs"), null);
+  assert.deepEqual((await ctx.registry.getNamespace("docs")).origins, ["https://docs.example.com"]);
+});
+
+test("step one refuses a missing or bad URL before showing anything", async () => {
+  const ctx = await setup();
+  for (const url of [undefined, "", "docs.example.com", "http://docs.example.com", "javascript:alert(1)"]) {
+    const response = await post(ctx.hub, "/admin/ns/new", { name: "Docs", ...(url === undefined ? {} : { url }) }, { cookie: ctx.cookie });
+    assert.equal(redirectTarget(response).searchParams.get("err"), "bad_url", JSON.stringify(url));
+  }
+});
+
+test("step one is a POST only, with the same CSRF and origin checks, so a link cannot pre-fill it", async () => {
+  const ctx = await setup();
+  assert.equal((await get(ctx.hub, "/admin/ns/new?name=Evil&url=https://evil.example", ctx.cookie)).status, 404, "GET is just the page of a site called 'new', which does not exist");
+  assert.match(await (await get(ctx.hub, "/admin/ns/new?name=Evil&url=https://evil.example", ctx.cookie)).text(), /does not exist/);
+  assert.doesNotMatch(await (await get(ctx.hub, "/admin/ns/new?name=Evil&url=https://evil.example", ctx.cookie)).text(), /evil\.example/);
+
+  const noToken = await post(ctx.hub, "/admin/ns/new", { name: "Docs", url: "https://docs.example.com" }, { cookie: ctx.cookie, csrf: "nope" });
+  assert.equal(redirectTarget(noToken).searchParams.get("err"), "bad_request");
+  const cross = await post(ctx.hub, "/admin/ns/new", { name: "Docs", url: "https://docs.example.com" }, { cookie: ctx.cookie, origin: "https://evil.example" });
+  assert.equal(redirectTarget(cross).searchParams.get("err"), "bad_request");
+  const signedOut = await post(ctx.hub, "/admin/ns/new", { name: "Docs", url: "https://docs.example.com" });
+  assert.doesNotMatch(await signedOut.text(), /Add a site/);
+});
+
+test("what the admin typed is escaped when it is shown back to them", async () => {
+  const ctx = await setup();
+  const evil = `"><img src=x onerror=alert(1)>`;
+  const html = await (await post(ctx.hub, "/admin/ns/new", { name: evil, url: "https://docs.example.com" }, { cookie: ctx.cookie })).text();
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.equal(inputValue(html, "namespace").match(/^[a-z0-9-]+$/) !== null, true, "the suggestion is always a plain id");
+});
+
+test("a site named 'new' does not collide with the first step", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "new", name: "New", url: "https://new.example" }, { cookie: ctx.cookie });
+  assert.match(await (await get(ctx.hub, "/admin/ns/new", ctx.cookie)).text(), /Site URLs/, "its own page");
+  const update = await post(ctx.hub, "/admin/ns/new/update", { name: "Renamed", enabled: "1" }, { cookie: ctx.cookie });
+  assert.equal(redirectTarget(update).searchParams.get("ok"), "site_saved");
+  const step = await post(ctx.hub, "/admin/ns/new", { name: "Other", url: "https://other.example" }, { cookie: ctx.cookie });
+  assert.equal(step.status, 200);
+  assert.equal(inputValue(await step.text(), "namespace"), "other");
+});

@@ -82,6 +82,44 @@ export function assertOrigins(origins) {
   return clean;
 }
 
+/** Lower-case letters and digits joined by single hyphens, at most `max` long, no hyphen at either end. */
+function slug(text, max = 24) {
+  return String(text ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, max)
+    .replace(/-+$/, "");
+}
+
+/**
+ * A namespace to propose for a new site, from its display name or, failing that, its URL's first
+ * host label ("docs.example.com" -> "docs"). It is only a suggestion: the console shows it in an
+ * editable box. Always valid, never reserved, and never one already in `taken` — a clash gets a
+ * numeric suffix ("docs-2").
+ *
+ * @param {{ name?: string, url?: string }} site
+ * @param {Iterable<string>} [taken]  Namespaces that already exist.
+ */
+export function suggestNamespace({ name, url } = {}, taken = []) {
+  const used = new Set(taken);
+  used.add(ADMIN_NAMESPACE);
+
+  const origin = normalizeOrigin(url ?? "");
+  const hostLabel = origin ? new URL(origin).hostname.replace(/^www\./, "").split(".")[0] : "";
+  const base = slug(name) || slug(hostLabel) || "site";
+
+  if (!used.has(base)) return base;
+  for (let n = 2; n < 1000; n++) {
+    const suffix = `-${n}`;
+    const candidate = `${base.slice(0, 24 - suffix.length).replace(/-+$/, "")}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `${base.slice(0, 19).replace(/-+$/, "")}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 /** A Telegram user id: a positive safe integer. Returns it as a number, or null. */
 export function parseTelegramId(value) {
   const text = String(value ?? "").trim();

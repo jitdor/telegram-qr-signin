@@ -75,7 +75,8 @@ A second run of either fails loudly and changes nothing. `createNamespace()` now
 so code that seeds sites programmatically needs the URL added.
 
 **2. Open `https://<hub>/admin`** and scan the QR with a Telegram account whose numeric id is in
-`superAdmins`. Add a site (`docs`, "Internal docs", `https://docs.example.com`). Grant people access.
+`superAdmins`. Add a site: enter its display name and URL (`Internal docs`, `https://docs.example.com`), and the
+console proposes an id (`internal-docs`) that you can edit before saving. Grant people access.
 
 **3. Each site** — [`examples/hub/site-worker.js`](../examples/hub/site-worker.js). It is
 `createTelegramQrAuth` with the hub's gate already wired in:
@@ -110,7 +111,7 @@ Server-rendered, no JavaScript, no external requests. Everything is behind the s
 
 | Area | What a super admin can do |
 | --- | --- |
-| **Sites** | Add a site (namespace, display name and the URL it is served from), rename it, switch sign-in off and on, delete it |
+| **Sites** | Add a site (display name and the URL it is served from, then confirm its suggested id), rename it, switch sign-in off and on, delete it |
 | **Site URLs** | Add or remove the origins a site is served from — the namespace works only there |
 | **Who can sign in** | Keep a site to approved people (the default), or [open it to anyone](#open-sites) with a Telegram account |
 | **People with access** | Grant by Telegram id (paste many at once, with an optional note), revoke |
@@ -140,6 +141,20 @@ never touch the database to be recognised. That is what makes locking yourself o
 with an empty or broken registry, they can sign in and repair it. Admins you add in the console are
 extra, removable, and recorded with who added them. All super admins are equal; there are no
 per-site administrators.
+
+## Site ids
+
+Each site has an **id** (the `namespace` in code): the short label that goes in the QR so the bot
+knows which site a scan is for, and the stable key its access list hangs off. It is separate from the
+URL on purpose. A URL can change, or gain a `workers.dev` twin, and a site can have several, but
+people's access must survive that; the id is what stays put.
+
+You rarely need to invent one. When you add a site the console proposes an id from the display name
+(`Internal docs` → `internal-docs`), or from the URL's first label if there is no name
+(`docs.example.com` → `docs`), adds `-2`, `-3`… if it is taken, and shows it in an editable box on a
+confirmation page before anything is saved. Change it if you like; once saved it is fixed, because
+the site's code and its stored access both refer to it. (An id is 1–24 letters, digits and hyphens,
+and `hub-admin` is reserved for the console.)
 
 ## Binding a site to its URL
 

@@ -27,6 +27,7 @@ import {
   normalizeOrigin,
   parseTelegramId,
   parseTelegramIds,
+  suggestNamespace,
 } from "./validate.js";
 
 const MAX_IDS_PER_SUBMIT = 200;
@@ -153,6 +154,7 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
 
     const [a, b, c, d, e] = rest;
     if (a === "ns" && rest.length === 1) return createSite(ctx);
+    if (a === "ns" && b === "new" && rest.length === 2) return newSite(ctx);
     if (a === "ns" && NAMESPACE_RE.test(b ?? "")) {
       if (c === "update" && rest.length === 3) return updateSite(ctx, b);
       if (c === "delete" && rest.length === 3) return deleteSite(ctx, b);
@@ -229,14 +231,13 @@ ${flash(ctx.url)}
       .join("")}</tbody></table></div>`
       : '<p class="empty">No sites yet. Add the first one below.</p>'
   }
-  ${postForm(ctx, `${adminPath}/ns`, `
+  ${postForm(ctx, `${adminPath}/ns/new`, `
     <div class="row">
-      <label>Namespace<input name="namespace" required maxlength="24" pattern="[A-Za-z0-9\\-]{1,24}" placeholder="acme" autocomplete="off" spellcheck="false"></label>
       <label>Display name<input name="name" maxlength="60" placeholder="Acme dashboard" autocomplete="off"></label>
       <label>Site URL<input name="url" required maxlength="200" placeholder="https://acme.example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>
-      <button class="btn primary">Add site</button>
+      <button class="btn primary">Continue</button>
     </div>
-    <p class="hint">The namespace is what the site's code passes as <code>namespace</code>: letters, digits and hyphens, up to 24, fixed once created. The URL is where the site is served from; the namespace works only there. You can add more URLs later.</p>`)}
+    <p class="hint">Next you will confirm the site's id, which is suggested from these and can be changed before you save.</p>`)}
 </section>
 
 <section>
@@ -463,6 +464,36 @@ ${
   }
 
   // --- Actions ---------------------------------------------------------------------------------
+
+  /**
+   * Step one of adding a site: take the name and URL, and show a confirmation page with a suggested
+   * id the admin can edit before anything is saved. Nothing is written here. It is a POST rather
+   * than a link so that only the admin's own form can produce it: a crafted link that pre-filled a
+   * URL would be a way to get someone to bind a site they did not mean to.
+   */
+  async function newSite(ctx) {
+    const origin = normalizeOrigin(String(ctx.form.get("url") ?? ""));
+    if (!origin) return redirect(adminPath, { err: "bad_url" });
+    const name = cleanName(ctx.form.get("name"));
+    const taken = (await registry.listNamespaces()).map((site) => site.namespace);
+    const namespace = suggestNamespace({ name, url: origin }, taken);
+
+    const body = `
+<p class="crumb"><a href="${adminPath}">&larr; All sites</a></p>
+<section>
+  <h2>Add a site</h2>
+  <p class="lead">Check the id before saving. It is what the site's code and the bot use to recognise this site, and it cannot be changed afterwards.</p>
+  ${postForm(ctx, `${adminPath}/ns`, `
+    <div class="row">
+      <label>Id<input name="namespace" value="${esc(namespace)}" required maxlength="24" pattern="[A-Za-z0-9\\-]{1,24}" autocomplete="off" spellcheck="false"></label>
+      <label>Display name<input name="name" value="${esc(name)}" maxlength="60" placeholder="${esc(namespace)}" autocomplete="off"></label>
+      <label class="grow">Site URL<input name="url" value="${esc(origin)}" required maxlength="200" autocomplete="off" spellcheck="false" inputmode="url"></label>
+    </div>
+    <p class="hint">Suggested from ${name ? "the display name" : "the URL"}. Letters, digits and hyphens, up to 24. In the site's code it is <code>createSiteAuth({ namespace: "…", … })</code>.</p>
+    <div class="row"><button class="btn primary">Add site</button> <a class="btn quiet" href="${adminPath}">Cancel</a></div>`)}
+</section>`;
+    return page("Add a site", body, ctx);
+  }
 
   async function createSite({ form, session }) {
     const namespace = String(form.get("namespace") ?? "").trim();
@@ -748,6 +779,7 @@ main{max-width:62rem;margin:0 auto;padding:20px 16px 64px}
 section{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:20px;margin:0 0 18px}
 h2{margin:0 0 4px;font-size:1.1rem;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .lead{margin:0 0 14px;color:var(--muted);font-size:.9rem}
+.hint+.row{margin-top:14px}
 .hint{margin:8px 0 0;color:var(--muted);font-size:.82rem}
 .crumb{margin:0 0 12px;font-size:.9rem}
 .muted{color:var(--muted)}

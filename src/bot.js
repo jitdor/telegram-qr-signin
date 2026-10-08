@@ -25,6 +25,9 @@ async function safeEqual(candidate, secret) {
  * @param {boolean} [options.showClientContext=true]  Append where the sign-in was started from
  *   (origin, IP, browser) to the success message. Costs nothing and is the main defence against
  *   someone being talked into scanning a QR that isn't theirs — see the README.
+ * @param {boolean} [options.showReturnHint=true]  When the sign-in page was open in a phone or
+ *   tablet browser, say how to get back to it ("tap ◀ Safari at the top-left"). A bot cannot switch
+ *   apps for the person, but their phone has a way back and most people do not know it is there.
  * @param {Function} [options.onSignIn]  `(user, result) => void|Promise` after a successful confirm.
  * @returns {(update: object) => Promise<boolean>}  true if the update was a sign-in for this app.
  */
@@ -33,6 +36,7 @@ export function createStartHandler(auth, options = {}) {
     telegram = auth.telegram,
     deleteCommandMessage = true,
     showClientContext = true,
+    showReturnHint = true,
     onSignIn,
   } = options;
 
@@ -50,6 +54,8 @@ export function createStartHandler(auth, options = {}) {
     if (!result.matched) return false;
 
     let reply = result.replyText;
+    const hint = result.ok && showReturnHint ? returnHint(result.client) : null;
+    if (hint) reply += `\n${hint}`;
     if (result.ok && showClientContext && result.client) {
       reply += `\n\n${formatClientContext(result.client)}`;
     }
@@ -140,27 +146,49 @@ function formatClientContext(client) {
   return `Signed in to: ${parts.join(" · ")}\nIf that wasn't you, sign out and tell whoever runs this app.`;
 }
 
-/** Deliberately coarse — a one-line hint for a human, not analytics. */
-function describeBrowser(userAgent) {
-  const browser = /Edg\//.test(userAgent)
+/**
+ * How to get back to the browser the sign-in page is open in, for phones and tablets; null for
+ * anything else (a computer's browser signs itself in with no help). On iOS, Telegram shows a
+ * "◀ <browser>" chip at the top-left when it was opened from a link in that browser; on Android the
+ * back gesture or the recent-apps switcher does it.
+ */
+function returnHint(client) {
+  const userAgent = client?.userAgent;
+  if (!userAgent) return null;
+  const browser = browserName(userAgent);
+  if (/iPhone|iPad|iPod/.test(userAgent)) return `↩ To go back, tap "◀ ${browser}" at the top-left of your screen.`;
+  if (/Android/.test(userAgent)) return `↩ To go back, swipe back or switch to ${browser}.`;
+  return null;
+}
+
+/** The browser's name, recognising the iOS builds that put their own token in the user agent. */
+function browserName(userAgent) {
+  return /Edg\/|EdgA\/|EdgiOS\//.test(userAgent)
     ? "Edge"
-    : /OPR\/|Opera/.test(userAgent)
+    : /OPR\/|OPT\/|Opera/.test(userAgent)
       ? "Opera"
-      : /Firefox\//.test(userAgent)
+      : /Firefox\/|FxiOS\//.test(userAgent)
         ? "Firefox"
-        : /Chrome\//.test(userAgent)
+        : /Chrome\/|CriOS\//.test(userAgent)
           ? "Chrome"
           : /Safari\//.test(userAgent)
             ? "Safari"
             : "browser";
+}
+
+/** Deliberately coarse — a one-line hint for a human, not analytics. */
+function describeBrowser(userAgent) {
+  const browser = browserName(userAgent);
+  // iPhone and iPad user agents say "like Mac OS X", so they must be recognised before macOS or
+  // every iPhone sign-in would be described as a Mac. Likewise Android before Linux.
   const platform = /Windows/.test(userAgent)
     ? "Windows"
-    : /Macintosh|Mac OS/.test(userAgent)
-      ? "macOS"
+    : /iPhone|iPad|iPod/.test(userAgent)
+      ? "iOS"
       : /Android/.test(userAgent)
         ? "Android"
-        : /iPhone|iPad/.test(userAgent)
-          ? "iOS"
+        : /Macintosh|Mac OS/.test(userAgent)
+          ? "macOS"
           : /Linux/.test(userAgent)
             ? "Linux"
             : null;

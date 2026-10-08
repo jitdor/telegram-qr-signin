@@ -471,8 +471,16 @@ Android, iOS/iPadOS, macOS and Windows; without Telegram installed the link does
 is still there. If the user has opened the bot before, Telegram shows a **Start** (or **Restart**)
 button rather than sending `/start` by itself, and the default mobile copy says so.
 
-The page polls straight away when its tab becomes visible again, so coming back from Telegram does
-not mean waiting out a throttled background timer.
+The page polls straight away when its tab becomes visible again, when it is restored from the
+back/forward cache, or when its window regains focus, so coming back from Telegram does not mean
+waiting out a throttled background timer.
+
+**Getting back to the page.** A bot cannot switch apps for the user, and neither can the page. What
+the sign-in can do is say how: when the page was open in a phone or tablet browser, the bot's success
+message adds a line such as `↩ To go back, tap "◀ Safari" at the top-left of your screen.` (iOS shows
+that chip when Telegram was opened from a link in the browser) or `↩ To go back, swipe back or switch
+to Chrome.` on Android. Computers get nothing, since their browser signs itself in. Turn it off with
+`createStartHandler(auth, { showReturnHint: false })`.
 
 Text is customisable via `branding.mobileLinkText`, `mobileSubtitle`, `qrHintText` and
 `qrLinkTitle`; the page a phone sees for an ended code via `scanEndedHeading` and `scanEndedText`.
@@ -480,8 +488,10 @@ A custom `renderLoginPage` should keep this: show `qrSvg` (it already encodes `q
 the QR and the button to `appLink`, in the same tab.
 
 Or replace the page entirely:
-`renderLoginPage({ token, deepLink, appLink, qrLink, qrSvg, error, pollPath, pollIntervalMs, redirectTo })`
-returns an HTML string. The contract a replacement must keep is polling `pollPath` and handling the
+`renderLoginPage({ token, deepLink, appLink, qrLink, qrSvg, error, pollPath, pollIntervalMs, redirectTo, origin, site })`
+returns an HTML string (or a promise of one). `origin` is where the page is being served from; `site`
+(`{ name, host }`, supplied by the [hub](#one-bot-many-sites-the-hub)) is shown under the heading, and
+`name` becomes "Sign in to <name>" unless you set `branding.heading`. The contract a replacement must keep is polling `pollPath` and handling the
 five statuses in `POLL_STATUSES`: `pending` · `confirmed` · `expired` · `invalid` · `denied`. The
 built-in page's polling script is exported, so a custom page only needs to supply markup:
 

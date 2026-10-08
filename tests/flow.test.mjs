@@ -497,3 +497,22 @@ test("a bring-your-own store without consume() still works", async () => {
   assert.equal((await (await pollOnce(auth, token)).json()).status, "confirmed");
   assert.equal((await (await pollOnce(auth, token)).json()).status, "invalid");
 });
+
+test("the sign-in page renderer is told where the page is served from, and may be async", async () => {
+  const seen = [];
+  const { auth } = setup({
+    renderLoginPage: async (params) => {
+      seen.push(params.origin);
+      return `<html>${params.token}</html>`;
+    },
+  });
+  const html = await auth.loginPage({ request: makeRequest("https://app.example:8443/dashboard?x=1") });
+  assert.match(html, /^<html>[0-9a-f]{32}<\/html>$/);
+  assert.deepEqual(seen, ["https://app.example:8443"]);
+
+  await auth.loginPage(); // no request: nothing to report, and nothing breaks
+  assert.equal(seen[1], undefined);
+  const response = await auth.loginResponse({ request: makeRequest("https://app.example/") });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /^<html>/);
+});

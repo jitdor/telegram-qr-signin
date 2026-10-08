@@ -87,6 +87,13 @@ const gate = await auth.guard(request);    // cookie + a live registry check, ev
 if (!gate.ok) return gate.response;
 ```
 
+The sign-in page says which site it is: "Sign in to Internal docs", with the host it is served from
+(`docs.example.com`) under the heading. The name comes from the registry, so a rename in the console
+shows on the next load; if the registry cannot be read the page still shows the host. Set
+`branding.heading` to use your own heading instead (the host is still shown). The page is the site
+describing itself, so it helps people notice the wrong environment, but it is not a defence: a fake
+page can say anything. The bot's confirmation message, which a page cannot forge, is the check.
+
 The site does not say which site it is. On each request it looks up the URL it was reached at in the
 registry and acts as the site that URL is registered to, so there is no id to copy into the code and
 nothing to drift out of step with the console. At a URL that is not registered it refuses everything:

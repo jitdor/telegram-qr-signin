@@ -11,6 +11,7 @@
 // instead, which skips that lookup.
 
 import { createTelegramQrAuth, jsonResponse } from "../provider.js";
+import { renderLoginPage as defaultRenderLoginPage } from "../login-page.js";
 import { every } from "../gates.js";
 import { hubGate } from "./gates.js";
 import { assertSiteNamespace, originOfRequest } from "./validate.js";
@@ -68,8 +69,32 @@ function createPinnedSiteAuth(config) {
   }
 
   const hub = hubGate({ registry, namespace, recordRequests, onError });
+
+  // The sign-in page says which site it is and where it is served from, so a person who ends up on
+  // the wrong environment, or the wrong site, can see it before they scan. The name is read from the
+  // registry each time (an admin may rename the site); if that fails the page still renders, with the
+  // host alone. It is self-reported by the page, so it helps people orient, not defend: the bot's
+  // message is the check that cannot be faked by a page.
+  const render = rest.renderLoginPage ?? defaultRenderLoginPage;
+  const renderLoginPage = async (params) => {
+    let name;
+    try {
+      name = (await registry.getNamespace(namespace))?.name;
+    } catch (err) {
+      (onError ?? defaultOnError)(err);
+    }
+    let host;
+    try {
+      host = params.origin ? new URL(params.origin).host : undefined;
+    } catch {
+      host = undefined;
+    }
+    return render({ ...params, site: { name, host } });
+  };
+
   return createTelegramQrAuth({
     ...rest,
+    renderLoginPage,
     namespace,
     botToken,
     telegram: telegram ?? (botToken ? undefined : NO_TELEGRAM),

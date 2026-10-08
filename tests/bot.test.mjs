@@ -243,3 +243,93 @@ test("an onUnhandled that throws is reported and acked too", async () => {
   assert.equal(response.status, 200);
   assert.equal(errors.length, 1);
 });
+
+// --- Getting back to the browser ---------------------------------------------------------------
+
+const UA = {
+  iphoneSafari: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+  iphoneChrome: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/123.0.6312.52 Mobile/15E148 Safari/604.1",
+  iphoneFirefox: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/124.0 Mobile/15E148 Safari/605.1.15",
+  ipadEdge: "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 EdgiOS/123.0.2420.65 Mobile/15E148 Safari/605.1.15",
+  androidChrome: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.99 Mobile Safari/537.36",
+  androidFirefox: "Mozilla/5.0 (Android 14; Mobile; rv:124.0) Gecko/124.0 Firefox/124.0",
+  macChrome: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  windowsEdge: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
+};
+
+async function signInFrom(userAgent, options) {
+  const { auth, telegram } = setup();
+  const handle = createStartHandler(auth, options);
+  const request = makeRequest("https://cockpit.example/auth/login", { headers: userAgent ? { "User-Agent": userAgent } : {} });
+  const { token } = await auth.beginLogin({ request });
+  await handle(messageUpdate(`/start cockpit_${token}`));
+  return telegram.calls.find((call) => call.method === "sendMessage").payload.text;
+}
+
+test("signing in from an iPhone browser says how to get back, naming that browser", async () => {
+  assert.match(await signInFrom(UA.iphoneSafari), /↩ To go back, tap "◀ Safari" at the top-left of your screen\./);
+  assert.match(await signInFrom(UA.iphoneChrome), /tap "◀ Chrome"/);
+  assert.match(await signInFrom(UA.iphoneFirefox), /tap "◀ Firefox"/);
+  assert.match(await signInFrom(UA.ipadEdge), /tap "◀ Edge"/);
+});
+
+test("signing in from an Android browser says how to get back", async () => {
+  assert.match(await signInFrom(UA.androidChrome), /↩ To go back, swipe back or switch to Chrome\./);
+  assert.match(await signInFrom(UA.androidFirefox), /switch to Firefox\./);
+});
+
+test("a computer's browser gets no hint, because it signs itself in", async () => {
+  for (const ua of [UA.macChrome, UA.windowsEdge, undefined, ""]) {
+    assert.doesNotMatch(await signInFrom(ua), /To go back/, String(ua).slice(0, 30));
+  }
+});
+
+test("the hint sits with the success line and above the sign-in context", async () => {
+  const text = await signInFrom(UA.iphoneSafari);
+  const [first, hint, blank, context] = text.split("\n");
+  assert.match(first, /signed in/i);
+  assert.match(hint, /^↩ /);
+  assert.equal(blank, "");
+  assert.match(context, /^Signed in to: https:\/\/cockpit\.example · Safari on iOS/);
+});
+
+test("the hint can be switched off, and does not depend on the client context being shown", async () => {
+  assert.doesNotMatch(await signInFrom(UA.iphoneSafari, { showReturnHint: false }), /To go back/);
+  const withoutContext = await signInFrom(UA.iphoneSafari, { showClientContext: false });
+  assert.match(withoutContext, /To go back/);
+  assert.doesNotMatch(withoutContext, /Signed in to:/);
+});
+
+test("a refusal gets no hint: there is nothing to go back to", async () => {
+  const { auth, telegram } = setup();
+  const handle = createStartHandler(auth);
+  const { token } = await auth.beginLogin({ request: makeRequest("https://cockpit.example/", { headers: { "User-Agent": UA.iphoneSafari } }) });
+  await handle(messageUpdate(`/start cockpit_${token}`, MALLORY));
+  assert.doesNotMatch(telegram.calls.find((call) => call.method === "sendMessage").payload.text, /To go back/);
+});
+
+test("a sign-in that recorded no client has no hint to give", async () => {
+  const { auth, telegram } = setup({ captureClient: false });
+  const handle = createStartHandler(auth);
+  const { token } = await auth.beginLogin({ request: makeRequest("https://cockpit.example/", { headers: { "User-Agent": UA.iphoneSafari } }) });
+  await handle(messageUpdate(`/start cockpit_${token}`));
+  assert.doesNotMatch(telegram.calls.find((call) => call.method === "sendMessage").payload.text, /To go back/);
+});
+
+test("the sign-in context now names iOS builds of Chrome and Firefox correctly", async () => {
+  assert.match(await signInFrom(UA.iphoneChrome), /Signed in to: .*Chrome on iOS/);
+  assert.match(await signInFrom(UA.iphoneFirefox), /Firefox on iOS/);
+});
+
+test("the sign-in context names the platform correctly for phones, tablets and computers", async () => {
+  const cases = [
+    [UA.iphoneSafari, "Safari on iOS"],
+    [UA.ipadEdge, "Edge on iOS"],
+    [UA.androidChrome, "Chrome on Android"],
+    [UA.androidFirefox, "Firefox on Android"],
+    [UA.macChrome, "Chrome on macOS"],
+    [UA.windowsEdge, "Edge on Windows"],
+    ["Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0", "Firefox on Linux"],
+  ];
+  for (const [ua, expected] of cases) assert.match(await signInFrom(ua), new RegExp(`Signed in to: https://cockpit\\.example · ${expected}`), expected);
+});

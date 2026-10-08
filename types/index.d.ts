@@ -241,7 +241,8 @@ export interface TelegramQrAuthConfig {
    * Unset (the default), the QR encodes the t.me deep link itself.
    */
   qrOrigin?: string;
-  renderLoginPage?: (params: RenderLoginPageParams) => string;
+  /** May return a string or a promise of one. */
+  renderLoginPage?: (params: RenderLoginPageParams) => string | Promise<string>;
   claims?: (user: AuthUser) => Record<string, unknown>;
   captureClient?: boolean;
   allowAssertions?: boolean;
@@ -262,6 +263,13 @@ export interface RenderLoginPageParams {
   pollIntervalMs?: number;
   branding?: Branding;
   redirectTo?: string;
+  /** The origin the page is being served from, when the request is known. */
+  origin?: string;
+  /**
+   * Which site this is, for pages that say so. `host` is shown under the heading; `name` replaces
+   * the default heading and title ("Sign in to <name>") unless `branding` sets them.
+   */
+  site?: { name?: string; host?: string };
 }
 
 export interface SessionClaims extends Record<string, unknown> {
@@ -348,6 +356,8 @@ export interface StartHandlerOptions {
   telegram?: TelegramApi;
   deleteCommandMessage?: boolean;
   showClientContext?: boolean;
+  /** Say how to get back to the sign-in page's browser, when it was a phone or tablet. Default true. */
+  showReturnHint?: boolean;
   onSignIn?: (user: AuthUser, result: ConfirmResult) => void | Promise<void>;
 }
 

@@ -63,7 +63,9 @@ const NAMESPACE_RE = /^[A-Za-z0-9-]{1,24}$/; // no "_": it is the payload separa
  * @param {string} [config.qrOrigin]        Opt-in. An https origin you serve this app at, e.g.
  *   "https://app.example.com". The QR then encodes https://<qrOrigin><basePath>/q/<token>, which
  *   redirects to the t.me deep link. Unset, the QR encodes the t.me deep link itself.
- * @param {Function} [config.renderLoginPage]  Replace the built-in page entirely.
+ * @param {Function} [config.renderLoginPage]  Replace the built-in page entirely. It may return a
+ *   string or a promise of one, and is given `origin` (where the page is being served from, when the
+ *   request is known) along with the rest of what the built-in page uses.
  * @param {Function} [config.claims]        `(user) => object` of extra claims to sign into the
  *   cookie. Keep it small: it rides on every request, and it is signed, not encrypted.
  * @param {boolean} [config.captureClient=true]  Record IP/user-agent at mint time so the bot can
@@ -192,6 +194,7 @@ export function createTelegramQrAuth(config) {
   async function loginPage({ error, request, redirectTo: to } = {}) {
     const { token, deepLink, appLink, qrLink, svg } = await beginLogin({ request });
     return renderLoginPage({
+      origin: request ? safeOrigin(request.url) ?? undefined : undefined,
       token,
       deepLink,
       appLink,

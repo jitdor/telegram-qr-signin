@@ -57,9 +57,18 @@ const PLANE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 3
  * @param {number} params.pollIntervalMs
  * @param {object} [params.branding]
  * @param {string} [params.redirectTo="/"]  Where to send the browser once signed in.
+ * @param {string} [params.origin]    The origin this page is being served from, when the request is
+ *   known. Informational: nothing here uses it unless a replacement renderer does.
+ * @param {{ name?: string, host?: string }} [params.site]  Which site this is, for pages that say so.
+ *   `host` is shown under the heading. `name` replaces the default heading and title ("Sign in to
+ *   <name>"), but never one the app has set itself through `branding`. Supplied by the hub's
+ *   createSiteAuth; a standalone app can pass it from a custom renderer.
  */
 export function renderLoginPage(params) {
   const branding = { ...DEFAULT_BRANDING, ...(params.branding ?? {}) };
+  const site = params.site ?? null;
+  if (site?.name && params.branding?.heading === undefined) branding.heading = `Sign in to ${site.name}`;
+  if (site?.name && params.branding?.title === undefined) branding.title = `Sign in to ${site.name}`;
   const { token, deepLink, qrSvg, error, pollPath, pollIntervalMs = 2000, redirectTo = "/" } = params;
   const appLink = escapeHtml(params.appLink ?? appLinkFromDeepLink(deepLink));
   const errorHtml = error ? `<p class="tqa-error" role="alert">${escapeHtml(error)}</p>` : "";
@@ -106,6 +115,7 @@ ${branding.headHtml}
   }
   .tqa-head { text-align: center; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 2px dashed var(--tqa-rule); }
   .tqa-head h1 { margin: 0; font-size: 1.4rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; }
+  .tqa-site { margin: 6px 0 0; color: var(--tqa-muted); font: 600 0.82rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
   .tqa-sub { margin: 8px 0 0; color: var(--tqa-muted); font-size: 0.9rem; text-wrap: balance; }
   .tqa-error { margin: 0 0 16px; padding: 10px 14px; border-radius: 12px; background: #fdece7; color: #a42a17; font-size: 0.88rem; }
   .tqa-open, .tqa-retry {
@@ -157,6 +167,7 @@ ${branding.headHtml}
     <header class="tqa-head">
       ${branding.logoHtml}
       <h1>${escapeHtml(branding.heading)}</h1>
+      ${site?.host ? `<p class="tqa-site">${escapeHtml(site.host)}</p>` : ""}
       <p class="tqa-sub tqa-pointer-only">${escapeHtml(branding.subtitle)}</p>
     </header>
     ${errorHtml}
@@ -371,6 +382,16 @@ export function pollScript({ token, pollPath, redirectTo = "/", pollIntervalMs =
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible" && !stopped && !inFlight) poll();
   });
+  // Coming back can also restore the page from the back/forward cache, or just refocus the window,
+  // without the tab ever having been hidden. Ask at once in those cases too.
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("pageshow", function (event) {
+      if (event && event.persisted && !stopped && !inFlight) poll();
+    });
+    window.addEventListener("focus", function () {
+      if (!stopped && !inFlight) poll();
+    });
+  }
 
   root.setAttribute("data-tqa-state", "waiting");
   schedule(cfg.interval);

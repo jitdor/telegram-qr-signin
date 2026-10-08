@@ -170,7 +170,8 @@ function runPollScript(options = {}) {
     createElement: () => ({ addEventListener() {} }),
     addEventListener: (type, fn) => (listeners[type] = fn),
   };
-  const window = { location: { href: "/auth/login", reload() {} } };
+  const windowListeners = {};
+  const window = { location: { href: "/auth/login", reload() {} }, addEventListener: (type, fn) => (windowListeners[type] = fn) };
   const context = {
     document,
     window,
@@ -201,6 +202,9 @@ function runPollScript(options = {}) {
     showTab() {
       document.visibilityState = "visible";
       listeners.visibilitychange();
+    },
+    fireWindow(type, event) {
+      windowListeners[type](event);
     },
     async respond(status) {
       pending.shift().resolve({ json: async () => ({ status }) });
@@ -267,4 +271,76 @@ test("pollScript: invalid is treated as expired, and custom ids are honoured", a
   assert.equal(page.elements.get("tqa-hint").hidden, true);
   assert.equal(page.elements.get("tqa-open").hidden, false, "only the listed ids are hidden");
   assert.equal(page.elements.get("tqa-qr").children.length, 0, "no QR container, no retry button");
+});
+
+test("pollScript: a page restored from the back/forward cache polls at once; an ordinary pageshow does not", async () => {
+  const page = runPollScript();
+  page.fireWindow("pageshow", { persisted: false });
+  assert.equal(page.pending.length, 0, "a normal load is not a return");
+  page.fireWindow("pageshow", { persisted: true });
+  assert.equal(page.pending.length, 1, "restored from the cache: ask now");
+  page.fireWindow("pageshow", { persisted: true });
+  assert.equal(page.pending.length, 1, "never a second request while one is in flight");
+  await page.respond("pending");
+  assert.equal(page.timers.size, 1);
+});
+
+test("pollScript: refocusing the window polls at once, and a finished page stays finished", async () => {
+  const page = runPollScript();
+  page.fireWindow("focus");
+  assert.equal(page.pending.length, 1);
+  await page.respond("expired");
+  page.fireWindow("focus");
+  page.fireWindow("pageshow", { persisted: true });
+  assert.equal(page.pending.length, 0, "an expired code is not polled again");
+});
+
+test("pollScript: still runs where the window cannot take listeners", () => {
+  // A minimal environment (an old webview, a test double) must not stop the page working.
+  const context = { document: { visibilityState: "visible", documentElement: { setAttribute() {} }, getElementById: () => null, createElement: () => ({ addEventListener() {} }), addEventListener() {} }, window: { location: { href: "/" } }, fetch: () => new Promise(() => {}), setTimeout: () => 1, clearTimeout() {}, encodeURIComponent };
+  assert.doesNotThrow(() => vm.runInNewContext(pollScript({ token: "t0k", pollPath: "/auth/poll" }), context));
+});
+
+// --- The page can say which site it is --------------------------------------------------------------
+
+const PAGE = { token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSvg: "<svg></svg>", pollPath: "/auth/poll" };
+const visibleText = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+test("the sign-in page names the site and shows where it is served from, when it is told them", () => {
+  const html = renderLoginPage({ ...PAGE, site: { name: "Internal docs", host: "docs.example.com" } });
+  assert.match(html, /<h1>Sign in to Internal docs<\/h1>/);
+  assert.match(html, /<title>Sign in to Internal docs<\/title>/);
+  assert.match(html, /<p class="tqa-site">docs\.example\.com<\/p>/);
+  assert.match(visibleText(html), /Sign in to Internal docs docs\.example\.com/);
+});
+
+test("a site's host is shown even without a name, and a name without a host changes only the heading", () => {
+  const hostOnly = renderLoginPage({ ...PAGE, site: { host: "docs.example.com:8443" } });
+  assert.match(hostOnly, /<h1>Sign in with Telegram<\/h1>/);
+  assert.match(hostOnly, /class="tqa-site">docs\.example\.com:8443</);
+
+  const nameOnly = renderLoginPage({ ...PAGE, site: { name: "Docs" } });
+  assert.match(nameOnly, /<h1>Sign in to Docs<\/h1>/);
+  assert.doesNotMatch(nameOnly, /tqa-site">/);
+});
+
+test("a page that sets its own heading or title keeps them", () => {
+  const html = renderLoginPage({ ...PAGE, branding: { heading: "📈 Dashboard", title: "Acme" }, site: { name: "Internal docs", host: "docs.example.com" } });
+  assert.match(html, /<h1>📈 Dashboard<\/h1>/);
+  assert.match(html, /<title>Acme<\/title>/);
+  assert.match(html, /class="tqa-site">docs\.example\.com</, "but the host is still shown");
+});
+
+test("without a site the page is exactly as it was", () => {
+  const html = renderLoginPage(PAGE);
+  assert.doesNotMatch(html, /<p class="tqa-site">/);
+  assert.match(html, /<h1>Sign in with Telegram<\/h1>/);
+  assert.match(html, /<title>Sign in<\/title>/);
+});
+
+test("a site's name and host are escaped", () => {
+  const evil = `<img src=x onerror=alert(1)>"`;
+  const html = renderLoginPage({ ...PAGE, site: { name: evil, host: evil } });
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;&quot;/);
 });

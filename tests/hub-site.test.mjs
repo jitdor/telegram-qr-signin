@@ -267,3 +267,77 @@ test("D1HubStore: one site's damaged origins do not stop every other site being 
   assert.deepEqual(await store.namespacesForOrigin(ACME), ["acme"]);
   assert.deepEqual(await store.namespacesForOrigin("https://bad.example"), [], "the damaged site simply cannot be found, so it is refused");
 });
+
+// --- The sign-in page says which site it is ----------------------------------------------------
+
+async function loginHtml(site, host) {
+  return (await site.handle(makeRequest(`${host}/auth/login`))).text();
+}
+const visible = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+test("a hub site's sign-in page names the site and shows its host", async () => {
+  const ctx = await setup();
+  const html = await loginHtml(ctx.site, ACME);
+  assert.match(html, /<h1>Sign in to Acme dashboard<\/h1>/);
+  assert.match(html, /<title>Sign in to Acme dashboard<\/title>/);
+  assert.match(html, /<p class="tqa-site">acme\.example<\/p>/);
+  assert.match(visible(html), /Sign in to Acme dashboard acme\.example/);
+  assert.doesNotMatch(visible(html), /acme_|namespace/i, "the id itself is never shown as text");
+});
+
+test("each URL's page names its own site, and a port is part of the host shown", async () => {
+  const ctx = await setup();
+  await ctx.registry.addOrigin("forum", "https://forum.example:8443");
+  assert.match(await loginHtml(ctx.site, FORUM), /Sign in to The forum/);
+  const withPort = await loginHtml(ctx.site, "https://forum.example:8443");
+  assert.match(withPort, /class="tqa-site">forum\.example:8443</);
+  assert.doesNotMatch(await loginHtml(ctx.site, ACME), /The forum/);
+});
+
+test("the page follows a rename in the console on its next load", async () => {
+  const ctx = await setup();
+  await ctx.registry.updateNamespace("acme", { name: "Acme HQ" });
+  assert.match(await loginHtml(ctx.site, ACME), /<h1>Sign in to Acme HQ<\/h1>/);
+});
+
+test("a heading the site sets itself is kept, with the host still shown", async () => {
+  const ctx = await setup();
+  const site = makeDynamicSite(ctx, { branding: { heading: "📚 Internal docs" } });
+  const html = await loginHtml(site, ACME);
+  assert.match(html, /<h1>📚 Internal docs<\/h1>/);
+  assert.match(html, /class="tqa-site">acme\.example</);
+});
+
+test("a registry failure while naming the site does not stop the page, which still shows the host", async () => {
+  const ctx = await setup();
+  const errors = [];
+  const site = makeDynamicSite(ctx, { onError: (err) => errors.push(err) });
+  const real = ctx.registry.getNamespace.bind(ctx.registry);
+  ctx.registry.getNamespace = async () => {
+    throw new Error("D1 is down");
+  };
+  const html = await loginHtml(site, ACME);
+  ctx.registry.getNamespace = real;
+  assert.match(html, /<h1>Sign in with Telegram<\/h1>/);
+  assert.match(html, /class="tqa-site">acme\.example</);
+  assert.equal(errors.length, 1);
+});
+
+test("a pinned site's page says the same, and a custom renderer is handed the site", async () => {
+  const ctx = await setup();
+  const pinned = createSiteAuth({ namespace: "acme", botUsername: "hub_bot", store: ctx.store, registry: ctx.registry, session: { secret: "pinned-secret-pinned-secret-0000" } });
+  assert.match(await (await pinned.handle(makeRequest(`${ACME}/auth/login`))).text(), /<h1>Sign in to Acme dashboard<\/h1>/);
+
+  const seen = [];
+  const custom = makeDynamicSite(ctx, { renderLoginPage: (params) => (seen.push(params.site), "<p>custom</p>") });
+  assert.equal(await loginHtml(custom, ACME), "<p>custom</p>");
+  assert.deepEqual(seen, [{ name: "Acme dashboard", host: "acme.example" }]);
+});
+
+test("a hostile site name cannot break out of the page", async () => {
+  const ctx = await setup();
+  await ctx.registry.updateNamespace("acme", { name: `<img src=x onerror=alert(1)>` });
+  const html = await loginHtml(ctx.site, ACME);
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.match(html, /Sign in to &lt;img src=x onerror=alert\(1\)&gt;/);
+});

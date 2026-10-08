@@ -128,9 +128,14 @@ test("touch devices get an Open Telegram button and their own subtitle; both are
   assert.match(html, /@media \(hover: none\) and \(pointer: coarse\)/);
 });
 
-test("the default mobile copy explains the Start button an existing chat shows", () => {
+test("the default copy does not claim Start must be pressed: only first-time chats show the button", () => {
   const html = renderLoginPage({ token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSvg: "", pollPath: "/p" });
-  assert.match(html, /Tap Start at the bottom of the chat, then come back to this tab/);
+  // Mobile and desktop copy both say "if you see / if Telegram shows" a Start button.
+  assert.match(html, /tqa-touch-only" id="tqa-how">Telegram opens\. If you see a Start button, tap it, then come back to this tab\./);
+  assert.match(html, /tqa-pointer-only">[^<]*If Telegram shows a Start button, tap it\./);
+  // The step list no longer tells everyone to "Press Start" (returning users are signed in automatically).
+  assert.match(html, /<li>Approve in the chat<\/li>/);
+  assert.doesNotMatch(html, /Press Start|Tap Start at the bottom/);
 });
 
 test("branding text cannot close the script element it is embedded in", () => {
@@ -353,7 +358,7 @@ const BASE = { token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSv
 
 test("the page shows how it works as a labelled list of three steps, in the app's own words if it has them", () => {
   const html = renderLoginPage(BASE);
-  assert.match(html, /<ol class="tqa-steps" aria-label="How it works">\s*<li>Open Telegram<\/li>\s*<li>Press Start<\/li>\s*<li>You&#39;re in<\/li>\s*<\/ol>/);
+  assert.match(html, /<ol class="tqa-steps" aria-label="How it works">\s*<li>Open Telegram<\/li>\s*<li>Approve in the chat<\/li>\s*<li>You&#39;re in<\/li>\s*<\/ol>/);
 
   const french = renderLoginPage({ ...BASE, branding: { stepsLabel: "Comment ça marche", stepOneText: "Ouvrez Telegram", stepTwoText: "Appuyez sur Démarrer", stepThreeText: "C'est fait" } });
   assert.match(french, /aria-label="Comment ça marche"/);

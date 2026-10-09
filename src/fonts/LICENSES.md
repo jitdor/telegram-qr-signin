@@ -2,7 +2,7 @@
 
 The sign-in page serves three fonts from this package, subset to Latin (see `scripts/build-fonts.sh`). All are licensed under the SIL Open Font License 1.1, reproduced below for each. No Reserved Font Name is declared by any of them.
 
-## Archivo (instanced at width 80, weight 900)
+## Archivo (instanced at width 65, weight 900)
 
 ```text
 Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo) Archivo-Italic[wdth,wght].ttf: Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)

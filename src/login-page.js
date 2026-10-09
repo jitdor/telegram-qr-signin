@@ -222,7 +222,7 @@ function loginStyles(branding, fontsPath) {
   }
   .tqa-stage { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(1.5rem, 5vh, 3.5rem) 0 1.5rem; }
   .tqa-headline {
-    margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 9.9vw, 3.9rem)/0.94 var(--tqa-display);
+    margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 11.4vw, 4rem)/0.94 var(--tqa-display);
     letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance;
   }
   .tqa-hl { display: block; }
@@ -241,7 +241,7 @@ function loginStyles(branding, fontsPath) {
   .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.66rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
   .tqa-name {
     margin: 0.6rem 0 0; padding-bottom: 1rem; border-bottom: 2px solid var(--tqa-ink);
-    font: 900 calc(min(23cqw, 6.8rem) * var(--tqa-name-scale, 1))/0.9 var(--tqa-display); letter-spacing: -0.04em; text-transform: uppercase;
+    font: 900 calc(min(30cqw, 9rem) * var(--tqa-name-scale, 1))/0.9 var(--tqa-display); letter-spacing: -0.04em; text-transform: uppercase;
     overflow-wrap: break-word; text-wrap: balance;
   }
   .tqa-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; margin: 18px 0 0; }
@@ -339,8 +339,8 @@ function loginStyles(branding, fontsPath) {
     .tqa-stub::after { top: auto; right: auto; bottom: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
     .tqa-stamp-mark { font-size: 1.8rem; }
     /* Room to spare: the type steps down so the ticket reads as a ticket, not as a form. */
-    .tqa-headline { font-size: clamp(2rem, 9.9vw, 3.4rem); }
-    .tqa-name { font-size: calc(min(19cqw, 5.6rem) * var(--tqa-name-scale, 1)); }
+    .tqa-headline { font-size: clamp(2rem, 11.4vw, 4rem); }
+    .tqa-name { font-size: calc(min(25cqw, 7rem) * var(--tqa-name-scale, 1)); }
     .tqa-kicker, .tqa-field dt { font-size: 0.6rem; }
     .tqa-field dd { font-size: 0.8rem; }
     .tqa-cap { font-size: 0.62rem; }

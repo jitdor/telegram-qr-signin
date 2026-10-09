@@ -4,7 +4,7 @@
 # Needs node/npm and Python's fonttools + brotli (pip install fonttools brotli). The output is committed,
 # so nothing here runs when the package is installed or used; this is for whoever updates the fonts.
 #
-#   Archivo       the display face, pinned to width 80 and weight 900 (the headline and the ticket's name)
+#   Archivo       the display face, pinned to width 65 and weight 900 (the headline and the ticket's name)
 #   Inter         body text, variable weight
 #   Google Sans Code  the small labels and hints, variable weight
 #
@@ -24,7 +24,7 @@ fetch @fontsource-variable/archivo archivo archivo
 fetch @fontsource-variable/inter inter inter
 fetch @fontsource-variable/google-sans-code mono google-sans-code
 
-fonttools varLib.instancer "$work/archivo/package/files/archivo-latin-wdth-normal.woff2" wght=900 wdth=80 -o "$work/archivo.ttf"
+fonttools varLib.instancer "$work/archivo/package/files/archivo-latin-wdth-normal.woff2" wght=900 wdth=65 -o "$work/archivo.ttf"
 pyftsubset "$work/archivo.ttf" --unicodes="$unicodes" --flavor=woff2 --layout-features='kern,liga,calt' --output-file="$work/archivo-display.woff2"
 pyftsubset "$work/inter/package/files/inter-latin-wght-normal.woff2" --unicodes="$unicodes" --flavor=woff2 --layout-features='kern,liga,calt,tnum' --output-file="$work/inter.woff2"
 pyftsubset "$work/mono/package/files/google-sans-code-latin-wght-normal.woff2" --unicodes="$unicodes" --flavor=woff2 --layout-features='kern' --output-file="$work/google-sans-code.woff2"

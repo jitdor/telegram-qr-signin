@@ -2,7 +2,7 @@
 // anyone else (no Google Fonts, no CDN). They live in data.js as base64 because a Worker has no file
 // system and this package has no build step; `auth.handle()` answers /auth/fonts/<file> from them.
 //
-//   display  Archivo, width 80, weight 900    the headline and the ticket's name
+//   display  Archivo, width 65, weight 900    the headline and the ticket's name
 //   sans     Inter, variable weight           everything else
 //   mono     Google Sans Code, variable weight  the small labels and hints
 //

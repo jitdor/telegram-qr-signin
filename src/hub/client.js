@@ -39,12 +39,18 @@ export function createHubClient({ url, key, fetch: fetchImpl = globalThis.fetch,
         method,
         headers: { Authorization: `Bearer ${key}`, Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
-        // A redirect would carry the key somewhere the operator did not choose.
-        redirect: "error",
+        // A redirect would carry the key somewhere the operator did not choose, so none is followed
+        // (checked below). Not "error": the Workers runtime refuses that value and every call throws.
+        redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new HubError("hub_unreachable", 0, "could not reach the hub");
+    }
+    // The API never redirects, so an answer that does is not the hub (a wrong URL, a proxy). Its
+    // Location is left unread. Runtimes differ: a 3xx, or an opaque response with status 0.
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      throw new HubError("hub_unreachable", 0, "the hub's address answered with a redirect");
     }
     let data = null;
     try {

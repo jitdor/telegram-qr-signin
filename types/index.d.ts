@@ -148,35 +148,101 @@ export declare const gates: {
 };
 
 export interface Branding {
+  /** The tab title. Defaults to "Sign in to <name>" when the page knows the site's name. */
   title?: string;
+  /**
+   * The site's display name: the pass's name, the text beside the mark, and (by its first letter) the
+   * mark itself. Wins over the hub's `site.name`; with neither, the page is named after the address
+   * it is served from ("courier.example.com" becomes "Courier").
+   */
+  siteName?: string;
+  /** Headline, first line. */
   heading?: string;
-  subtitle?: string;
+  /** Headline, second line, on a computer or tablet. */
+  scanHeading?: string;
+  /** Headline, second line, on a phone about to open Telegram. */
+  tapHeading?: string;
+  approvedHeading?: string;
+  approvedSubheading?: string;
+  expiredHeading?: string;
+  expiredSubheading?: string;
+  deniedHeading?: string;
+  deniedSubheading?: string;
+  /** Top-left label of the ticket, and the one opposite it. */
+  kickerText?: string;
+  viaText?: string;
+  destinationLabel?: string;
+  phoneLabel?: string;
+  phoneText?: string;
+  codeLabel?: string;
+  codeText?: string;
+  statusLabel?: string;
+  stepLabel?: string;
+  /** `{n}` is the step number, 1 while waiting and 3 once signed in. */
+  stepText?: string;
+  nextLabel?: string;
+  nextText?: string;
+  /** `{name}` is the site's name. Also the note under the ADMITTED stamp. */
+  nextDoneText?: string;
+  nextExpiredText?: string;
+  nextDeniedText?: string;
+  /** What the Status field says while waiting, and on a phone that is about to open Telegram. */
   waitingText?: string;
+  readyText?: string;
+  /** Status once signed in. */
   successText?: string;
+  statusExpiredText?: string;
+  statusDeniedText?: string;
+  /** Longer messages on the stub when the code expired, or this Telegram account isn't allowed. */
   expiredText?: string;
   deniedText?: string;
   retryText?: string;
-  /** Text of the "Open Telegram" button shown to touch devices. */
+  stampText?: string;
+  /** Caption under the QR, and the one a phone shows when it is displaying the code for another phone. */
+  scanText?: string;
+  scanOtherText?: string;
+  /** Tooltip and accessible name of the (always clickable) QR. */
+  qrLinkTitle?: string;
+  /** Link under the QR on a computer that opens the Telegram app there. */
+  qrHintText?: string;
+  /** Text of the "Open Telegram" button on a phone, and on a tablet held upright. */
   mobileLinkText?: string;
+  /** Text of the button on a tablet held sideways. */
+  tabletLinkText?: string;
+  /** Divider between the QR and the button on a tablet. */
+  orScanText?: string;
+  tabletTitleText?: string;
+  /** Hint under the button. */
+  mobileSubtitle?: string;
+  /** Phone: switches to the QR, and back to the button. */
+  showQrText?: string;
+  showAppText?: string;
+  /** The line along the bottom: on a computer or tablet, on a phone, and on a phone showing the QR. */
+  footText?: string;
+  mobileFootText?: string;
+  scanFootText?: string;
   /** Heading on the page a phone sees when it opens a QR whose code expired or was used. */
   scanEndedHeading?: string;
   /** Text under `scanEndedHeading`. */
   scanEndedText?: string;
-  /** Subtitle shown to touch devices instead of `subtitle`. */
-  mobileSubtitle?: string;
-  /** Divider between the button and the QR on touch devices. */
-  orScanText?: string;
-  /** Page background behind the card; `gradientFrom`/`gradientTo` tint two soft glows over it. */
-  background?: string;
-  /** Hint under the QR on pointer devices. */
-  qrHintText?: string;
-  /** Tooltip and accessible name of the (always clickable) QR. */
-  qrLinkTitle?: string;
+  /** OIDC consent screen: headline (`{name}` in the second line is the app's name), the ticket's top-left label and the warning. */
+  consentHeading?: string;
+  consentSubheading?: string;
+  consentKickerText?: string;
+  consentWarnText?: string;
+  signedInAsLabel?: string;
+  returnsLabel?: string;
+  accessLabel?: string;
+  allowText?: string;
+  denyText?: string;
+  consentFootText?: string;
+  /** OIDC error page: the headline, the label before the code and the reassurance underneath. */
+  errorHeading?: string;
+  errorCodeLabel?: string;
+  errorNoteText?: string;
+  /** The page colour. Text on it is dark or white, whichever is more legible. */
   accent?: string;
-  gradientFrom?: string;
-  gradientTo?: string;
-  qrDark?: string;
-  qrLight?: string;
+  /** Replaces the mark in the top-left corner. */
   logoHtml?: string;
   footerHtml?: string;
   headHtml?: string;
@@ -260,14 +326,17 @@ export interface RenderLoginPageParams {
   qrSvg: string;
   error?: string;
   pollPath: string;
+  /** Where the app serves the bundled fonts from (`auth.paths.fonts`). Without it the page uses system fonts. */
+  fontsPath?: string;
   pollIntervalMs?: number;
   branding?: Branding;
   redirectTo?: string;
   /** The origin the page is being served from, when the request is known. */
   origin?: string;
   /**
-   * Which site this is, for pages that say so. `host` is shown under the heading; `name` replaces
-   * the default heading and title ("Sign in to <name>") unless `branding` sets them.
+   * Which site this is, for pages that say so. `name` is the pass's name, the mark's letter and the
+   * title ("Sign in to <name>", unless `branding.title` is set); `host` is the address shown top
+   * right and as the destination. The host falls back to `origin`, and the name to `branding.siteName`.
    */
   site?: { name?: string; host?: string };
 }
@@ -308,7 +377,7 @@ export type GuardResult =
 export interface TelegramQrAuth {
   namespace: string;
   basePath: string;
-  paths: { poll: string; login: string; logout: string; qr: string; scan: string };
+  paths: { poll: string; login: string; logout: string; qr: string; scan: string; fonts: string };
   cookieName: string;
   tokenTtlSeconds: number;
 

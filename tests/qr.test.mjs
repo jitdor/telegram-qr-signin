@@ -114,27 +114,38 @@ test("appLinkFromDeepLink maps t.me links and leaves anything else alone", () =>
   assert.equal(appLinkFromDeepLink("not a url"), "not a url");
 });
 
-test("touch devices get an Open Telegram button and their own subtitle; both are customisable", () => {
+test("touch devices get an Open Telegram button, a hint and a way to show the QR; all of it is customisable", () => {
   const html = renderLoginPage({
     token: "0".repeat(32),
     deepLink: "https://t.me/b?start=a_1",
     qrSvg: "<svg></svg>",
     pollPath: "/auth/poll",
-    branding: { mobileLinkText: "Ouvrir Telegram", mobileSubtitle: "Touchez le bouton", qrHintText: "Cliquez sur le code" },
+    branding: { mobileLinkText: "Ouvrir Telegram", tabletLinkText: "Ouvrir Telegram sur cette tablette", mobileSubtitle: "Touchez le bouton", qrHintText: "Cliquez sur le code", showQrText: "Un autre appareil ?", showAppText: "Telegram est ici ?", scanText: "Scannez" },
   });
-  assert.match(html, /<a class="tqa-open tqa-touch-only"[^>]*href="tg:\/\/resolve\?domain=b&amp;start=a_1"[^>]*><svg[^]*?<span>Ouvrir Telegram<\/span><\/a>/);
-  assert.match(html, /tqa-touch-only" id="tqa-how">Touchez le bouton/);
-  assert.match(html, /tqa-pointer-only" id="tqa-hint">Cliquez sur le code/);
+  assert.match(html, /<a class="tqa-open" id="tqa-open" href="tg:\/\/resolve\?domain=b&amp;start=a_1"><span class="tqa-lbl-short">Ouvrir Telegram<\/span><span class="tqa-lbl-long">Ouvrir Telegram sur cette tablette<\/span><svg/);
+  assert.match(html, /class="tqa-how" id="tqa-how">Touchez le bouton</);
+  assert.match(html, /class="tqa-here" id="tqa-here" href="tg:\/\/resolve\?domain=b&amp;start=a_1">Cliquez sur le code</);
+  assert.match(html, /id="tqa-show-qr">Un autre appareil \?<\/button>/);
+  assert.match(html, /id="tqa-show-app">Telegram est ici \?<\/button>/);
+  assert.match(html, /<span class="tqa-cap-main">Scannez<\/span>/);
   assert.match(html, /@media \(hover: none\) and \(pointer: coarse\)/);
+});
+
+test("on a phone the button leads and the QR is one tap away; the page remembers which view it is in", () => {
+  const html = renderLoginPage({ token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSvg: "", pollPath: "/p" });
+  assert.match(html, /<html lang="en" data-tqa-state="waiting" data-tqa-view="app">/);
+  assert.match(html, /html\[data-tqa-view="app"\] \.tqa-qr \{ display: none; \}/, "the QR is tucked away until it is asked for");
+  assert.match(html, /html\[data-tqa-view="qr"\] \.tqa-app \{ display: none; \}/);
+  assert.match(html, /setAttribute\("data-tqa-view", name\)[^]*?getElementById\("tqa-show-qr"\)[^]*?addEventListener\("click", view\("qr"\)\)/);
 });
 
 test("the default copy does not claim Start must be pressed: only first-time chats show the button", () => {
   const html = renderLoginPage({ token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSvg: "", pollPath: "/p" });
-  // Mobile and desktop copy both say "if you see / if Telegram shows" a Start button.
-  assert.match(html, /tqa-touch-only" id="tqa-how">Telegram opens\. If you see a Start button, tap it, then come back to this tab\./);
-  assert.match(html, /tqa-pointer-only">[^<]*If Telegram shows a Start button, tap it\./);
-  // The step list no longer tells everyone to "Press Start" (returning users are signed in automatically).
-  assert.match(html, /<li>Approve in the chat<\/li>/);
+  // "Tap Start, then Approve" is what the pass says it will take; the status moves on by itself when
+  // a returning user has no Start button to press, and the page never tells anyone to type anything.
+  assert.match(html, /class="tqa-how" id="tqa-how">Tap Start, then Approve\. Come back here when you&#39;re done\./);
+  assert.match(html, /<dt>Phone number<\/dt><dd>Not needed<\/dd>/);
+  assert.match(html, /<dt>Code to type<\/dt><dd>None<\/dd>/);
   assert.doesNotMatch(html, /Press Start|Tap Start at the bottom/);
 });
 
@@ -312,34 +323,50 @@ const PAGE = { token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSv
 const visibleText = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 test("the sign-in page names the site and shows where it is served from, when it is told them", () => {
-  const html = renderLoginPage({ ...PAGE, site: { name: "Internal docs", host: "docs.example.com" } });
-  assert.match(html, /<h1>Sign in to Internal docs<\/h1>/);
-  assert.match(html, /<title>Sign in to Internal docs<\/title>/);
-  assert.match(html, /<p class="tqa-site">docs\.example\.com<\/p>/);
-  assert.match(visibleText(html), /Sign in to Internal docs docs\.example\.com/);
+  const html = renderLoginPage({ ...PAGE, site: { name: "Courier", host: "courier.jitdor.com" } });
+  assert.match(html, /<title>Sign in to Courier<\/title>/);
+  assert.match(html, /<div class="tqa-brand"><span class="tqa-mark" aria-hidden="true">C<\/span><span class="tqa-brand-name">Courier<\/span><\/div>/);
+  assert.match(html, /<span class="tqa-host">courier\.jitdor\.com<\/span>/);
+  assert.match(html, /<p class="tqa-name"[^>]*>Courier<\/p>/);
+  assert.match(html, /<dt>Destination<\/dt><dd>courier\.jitdor\.com<\/dd>/);
+  assert.match(visibleText(html), /Courier courier\.jitdor\.com/);
 });
 
-test("a site's host is shown even without a name, and a name without a host changes only the heading", () => {
+test("the pass is named from what the page knows: the site's name, branding.siteName, or the address it is served from", () => {
   const hostOnly = renderLoginPage({ ...PAGE, site: { host: "docs.example.com:8443" } });
-  assert.match(hostOnly, /<h1>Sign in with Telegram<\/h1>/);
-  assert.match(hostOnly, /class="tqa-site">docs\.example\.com:8443</);
+  assert.match(hostOnly, /<span class="tqa-host">docs\.example\.com:8443</);
+  assert.match(hostOnly, /<span class="tqa-brand-name">Docs<\/span>/, "named after the first label of the host");
 
   const nameOnly = renderLoginPage({ ...PAGE, site: { name: "Docs" } });
-  assert.match(nameOnly, /<h1>Sign in to Docs<\/h1>/);
-  assert.doesNotMatch(nameOnly, /tqa-site">/);
+  assert.match(nameOnly, /<title>Sign in to Docs<\/title>/);
+  assert.doesNotMatch(nameOnly, /<span class="tqa-host">/);
+
+  const fromOrigin = renderLoginPage({ ...PAGE, origin: "https://courier.jitdor.com" });
+  assert.match(fromOrigin, /<span class="tqa-host">courier\.jitdor\.com</, "a standalone app shows where it is served from");
+  assert.match(fromOrigin, /<span class="tqa-brand-name">Courier<\/span>/);
+
+  const named = renderLoginPage({ ...PAGE, origin: "https://courier.jitdor.com", branding: { siteName: "Courier Ops" } });
+  assert.match(named, /<span class="tqa-brand-name">Courier Ops<\/span>/);
+  assert.match(named, /<span class="tqa-mark" aria-hidden="true">C<\/span>/, "the mark is the first letter only");
+
+  const bare = renderLoginPage({ ...PAGE, origin: "http://localhost:3000" });
+  assert.doesNotMatch(bare, /<span class="tqa-brand-name">/, "no usable name: just the mark");
+  assert.match(bare, /<span class="tqa-mark" aria-hidden="true"><svg/);
 });
 
-test("a page that sets its own heading or title keeps them", () => {
-  const html = renderLoginPage({ ...PAGE, branding: { heading: "📈 Dashboard", title: "Acme" }, site: { name: "Internal docs", host: "docs.example.com" } });
-  assert.match(html, /<h1>📈 Dashboard<\/h1>/);
+test("a page that sets its own headline or title keeps them", () => {
+  const html = renderLoginPage({ ...PAGE, branding: { heading: "📈 Dashboard", scanHeading: "Scan me.", title: "Acme" }, site: { name: "Internal docs", host: "docs.example.com" } });
+  assert.match(html, /<span class="tqa-v tqa-v-wait">📈 Dashboard<\/span>/);
+  assert.match(html, /<span class="tqa-h-scan">Scan me\.<\/span>/);
   assert.match(html, /<title>Acme<\/title>/);
-  assert.match(html, /class="tqa-site">docs\.example\.com</, "but the host is still shown");
+  assert.match(html, /<span class="tqa-host">docs\.example\.com</, "but the host is still shown");
 });
 
-test("without a site the page is exactly as it was", () => {
+test("without a site the page still reads as a pass, with the headline and no address", () => {
   const html = renderLoginPage(PAGE);
-  assert.doesNotMatch(html, /<p class="tqa-site">/);
-  assert.match(html, /<h1>Sign in with Telegram<\/h1>/);
+  assert.doesNotMatch(html, /<p class="tqa-site"/);
+  assert.match(html, /<h1 class="tqa-headline">/);
+  assert.match(visibleText(html), /Your pass is ready\. [^]*Scan it to sign in\. Tap to sign in\./);
   assert.match(html, /<title>Sign in<\/title>/);
 });
 
@@ -350,35 +377,53 @@ test("a site's name and host are escaped", () => {
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;&quot;/);
 });
 
+test("a long name shrinks to fit the ticket instead of overflowing it", () => {
+  const short = renderLoginPage({ ...PAGE, site: { name: "Courier" } });
+  assert.match(short, /--tqa-name-scale: 1"/);
+  const long = renderLoginPage({ ...PAGE, site: { name: "The internal documentation portal" } });
+  assert.match(long, /--tqa-name-scale: 0\.40"/);
+});
+
 // --- The look of the sign-in page --------------------------------------------------------------------
 
 import { renderScanEndedPage, DEFAULT_BRANDING } from "../src/login-page.js";
 
 const BASE = { token: "0".repeat(32), deepLink: "https://t.me/b?start=a_1", qrSvg: "<svg></svg>", pollPath: "/auth/poll" };
 
-test("the page shows how it works as a labelled list of three steps, in the app's own words if it has them", () => {
+test("the headline, the status and the stamp each have words for every way the sign-in can go", () => {
   const html = renderLoginPage(BASE);
-  assert.match(html, /<ol class="tqa-steps" aria-label="How it works">\s*<li>Open Telegram<\/li>\s*<li>Approve in the chat<\/li>\s*<li>You&#39;re in<\/li>\s*<\/ol>/);
+  for (const text of ["Approved.", "You&#39;re through.", "Pass expired.", "Get a new one.", "No entry.", "Not on the list.", "Awaiting scan", "Ready", "Admitted", "This sign-in code expired.", "Your Telegram account isn&#39;t allowed to sign in here."]) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.match(html, /<span class="tqa-v tqa-v-wait tqa-v-expired tqa-v-denied">1 of 3<\/span><span class="tqa-v tqa-v-ok">3 of 3<\/span>/);
+  assert.match(html, /<p class="tqa-stamp-note">Opening …<\/p>/, "no name to open: the placeholder is simply dropped");
+  const named = renderLoginPage({ ...BASE, site: { name: "Docs" } });
+  assert.match(named, /<p class="tqa-stamp-note">Opening Docs…<\/p>/);
 
-  const french = renderLoginPage({ ...BASE, branding: { stepsLabel: "Comment ça marche", stepOneText: "Ouvrez Telegram", stepTwoText: "Appuyez sur Démarrer", stepThreeText: "C'est fait" } });
-  assert.match(french, /aria-label="Comment ça marche"/);
-  assert.match(french, /<li>Ouvrez Telegram<\/li>\s*<li>Appuyez sur Démarrer<\/li>\s*<li>C&#39;est fait<\/li>/);
+  const french = renderLoginPage({ ...BASE, branding: { heading: "Votre pass est prêt.", stampText: "Admis", stepText: "{n} sur 3" } });
+  assert.match(french, /Votre pass est prêt\./);
+  assert.match(french, />Admis</);
+  assert.match(french, />1 sur 3</);
 });
 
-test("the steps follow the sign-in state through the attribute the poll script already sets", () => {
+test("the pass follows the sign-in state through the attribute the poll script already sets", () => {
   const html = renderLoginPage(BASE);
+  assert.match(html, /<html lang="en" data-tqa-state="waiting"/, "waiting from the first byte, before any script has run");
   for (const state of ["waiting", "signed-in", "expired", "denied"]) assert.match(html, new RegExp(`\\[data-tqa-state="${state}"\\]`), state);
-  assert.match(html, /\.tqa-steps li::before\s*\{\s*content: "✓"|content: "✓"/);
+  // The status field is the element the poll script writes to, with its own short words for each ending.
+  assert.match(html, /id="tqa-status" role="status"/);
+  assert.match(html, /"success":"Signed in","expired":"Expired","denied":"Not allowed","retry":"Get a new code"/);
+  assert.match(html, /html\[data-tqa-state="signed-in"\] \.tqa-stamp \{ display: grid; \}/);
 });
 
-test("the page has a tab icon in its own brand colours, as a data: URI so no /favicon.ico request is made", () => {
-  const html = renderLoginPage({ ...BASE, branding: { gradientFrom: "#ff0000", gradientTo: "#00ff00" } });
+test("the page has a tab icon in the site's letter and colour, as a data: URI so no /favicon.ico request is made", () => {
+  const html = renderLoginPage({ ...BASE, site: { name: "Courier" }, branding: { accent: "#ff0000" } });
   const href = html.match(/<link rel="icon" href="(data:image\/svg\+xml,[^"]+)">/)?.[1];
   assert.ok(href, "an icon link");
   const svg = decodeURIComponent(href.split(",")[1]);
-  assert.match(svg, /stop-color="#ff0000"/);
-  assert.match(svg, /stop-color="#00ff00"/);
+  assert.match(svg, /fill="#ff0000"[^>]*>C<\/text>/);
   assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+  assert.match(decodeURIComponent(renderLoginPage(BASE).match(/<link rel="icon" href="(data:[^"]+)"/)[1]), /<path fill="#ee5a1c"/, "no name, no letter: the plane");
 });
 
 test("an app that supplies its own icon keeps it, whichever way it writes the link", () => {
@@ -390,43 +435,65 @@ test("an app that supplies its own icon keeps it, whichever way it writes the li
   assert.equal((renderLoginPage({ ...BASE, branding: { headHtml: `<link rel="stylesheet" href="/x.css">` } }).match(/<link rel="icon"/g) ?? []).length, 1, "an unrelated link does not count");
 });
 
-test("by default the page follows the visitor's light or dark setting; an app with its own background keeps a light card on it", () => {
-  const themed = renderLoginPage(BASE);
-  assert.match(themed, /<meta name="color-scheme" content="light dark">/);
-  assert.match(themed, /@media \(prefers-color-scheme: dark\)/);
+test("the page is the accent colour, and the colour of its text follows from it", () => {
+  const html = renderLoginPage(BASE);
+  assert.match(html, /<meta name="color-scheme" content="light">/);
+  assert.match(html, /<meta name="theme-color" content="#ee5a1c">/);
+  assert.match(html, /--tqa-accent: #ee5a1c;/);
+  assert.match(html, /--tqa-on: #17130f;/, "dark text on the default orange");
+  assert.doesNotMatch(html, /prefers-color-scheme/);
 
-  const custom = renderLoginPage({ ...BASE, branding: { background: "#fff7ed" } });
-  assert.match(custom, /<meta name="color-scheme" content="light">/);
-  assert.doesNotMatch(custom, /@media \(prefers-color-scheme: dark\)/);
-  assert.match(custom, /--tqa-bg: #fff7ed;/);
+  const navy = renderLoginPage({ ...BASE, branding: { accent: "#0e1a2f" } });
+  assert.match(navy, /--tqa-accent: #0e1a2f;/);
+  assert.match(navy, /--tqa-on: #ffffff;/, "white text on a dark page");
+  assert.match(renderLoginPage({ ...BASE, branding: { accent: "#fc0" } }), /--tqa-on: #17130f;/, "three-digit colours work too");
+  assert.match(renderLoginPage({ ...BASE, branding: { accent: "rebeccapurple" } }), /--tqa-on: #17130f;/, "anything else falls back to dark");
 });
 
-test("text sits on a darkened brand gradient so it stays readable, whatever colours the app picks", () => {
-  const html = renderLoginPage({ ...BASE, branding: { gradientFrom: "#ffff00", gradientTo: "#00ffff" } });
-  assert.match(html, /--tqa-grad-ink: linear-gradient\(135deg, color-mix\(in srgb, var\(--tqa-a\) 72%, #000\), color-mix\(in srgb, var\(--tqa-b\) 82%, #000\)\)/);
-  assert.match(html, /\.tqa-open, \.tqa-retry \{[^}]*background: var\(--tqa-grad-ink\)/);
-  assert.match(html, /\.tqa-mark \{[^}]*background: var\(--tqa-grad-ink\)/);
+test("the QR keeps its colours scannable: dark modules on paper, finder squares in the page colour", () => {
+  const html = renderLoginPage(BASE);
+  assert.match(html, /\.tqa-qr svg > path \{ fill: var\(--tqa-ink\); \}/);
+  assert.match(html, /\.tqa-qr svg \.qr-eye \{ fill: color-mix\(in srgb, var\(--tqa-accent\) 88%, #000\); \}/);
+  const svg = qrSvg(DEEP_LINK);
+  assert.equal(svg.match(/class="qr-eye"/g).length, 3, "one per finder square");
 });
 
-test("the card is marked with the site's initials, the app's own logo, or Telegram's plane, in that order", () => {
-  assert.match(renderLoginPage({ ...BASE, site: { name: "Internal docs" } }), /<span class="tqa-mark" aria-hidden="true">ID<\/span>/);
-  assert.match(renderLoginPage({ ...BASE, site: { name: "Acme" } }), /aria-hidden="true">A<\/span>/);
+test("the mark is the first letter of the site's name, the app's own logo, or Telegram's plane, in that order", () => {
+  assert.match(renderLoginPage({ ...BASE, site: { name: "Internal docs" } }), /<span class="tqa-mark" aria-hidden="true">I<\/span>/);
+  assert.match(renderLoginPage({ ...BASE, site: { name: "courier" } }), /aria-hidden="true">C<\/span>/);
   assert.match(renderLoginPage({ ...BASE, site: { name: "!!!" } }), /<span class="tqa-mark" aria-hidden="true"><svg/, "no usable letters: the plane");
   assert.match(renderLoginPage(BASE), /<span class="tqa-mark" aria-hidden="true"><svg/);
   const logo = renderLoginPage({ ...BASE, site: { name: "Acme" }, branding: { logoHtml: '<img src="/logo.png" alt="">' } });
   assert.match(logo, /<img src="\/logo.png" alt="">/);
   assert.doesNotMatch(logo, /class="tqa-mark"/);
+  assert.match(logo, /<span class="tqa-brand-name">Acme<\/span>/, "the name stays beside a custom logo");
 });
 
 test("the page and the code-ended page make no request of their own: nothing external, and the only data: URIs are decoration", () => {
   for (const html of [renderLoginPage({ ...BASE, site: { name: "Docs", host: "docs.example.com" } }), renderScanEndedPage({})]) {
     const withoutDataUris = html.replace(/url\("data:[^"]*"\)/g, "").replace(/<link rel="icon" href="data:[^"]*">/, "");
     assert.doesNotMatch(withoutDataUris, /https?:\/\//, "no absolute URL anywhere");
-    assert.doesNotMatch(html, /@import|@font-face|<img|<iframe|<link rel="stylesheet"/i);
+    assert.doesNotMatch(html, /@import|@font-face|<img|<iframe|<link rel="stylesheet"/i, "without fontsPath there is nothing to fetch fonts from");
     assert.doesNotMatch(html, /<script src=/i);
   }
 });
 
+test("given a fontsPath the page uses the bundled fonts from that same origin, and still nothing external", () => {
+  for (const html of [renderLoginPage({ ...BASE, fontsPath: "/auth/fonts" }), renderScanEndedPage({ fontsPath: "/auth/fonts" })]) {
+    const urls = [...html.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]).filter((u) => !u.startsWith("data:"));
+    assert.equal(urls.length, 3, "one file per face");
+    for (const url of urls) assert.match(url, /^\/auth\/fonts\/(archivo-display|inter|google-sans-code)-[0-9a-f]{8}\.woff2$/);
+    assert.equal(html.match(/<link rel="preload" href="\/auth\/fonts\/[^"]+" as="font" type="font\/woff2" crossorigin>/g).length, 3);
+    for (const family of ["TQA Display", "TQA Sans", "TQA Mono"]) assert.match(html, new RegExp(`font-family: "${family}"`));
+    assert.match(html, /font-display: swap/);
+    assert.doesNotMatch(html.replace(/url\("data:[^"]*"\)/g, "").replace(/<link rel="icon" href="data:[^"]*">/, ""), /https?:\/\//);
+  }
+  // A path that could break out of the CSS or markup is not used at all.
+  for (const bad of ['/x"); }<script>', "fonts", "/a/../b", "//evil.example"]) {
+    const html = renderLoginPage({ ...BASE, fontsPath: bad });
+    assert.doesNotMatch(html, /@font-face|rel="preload"/, bad);
+  }
+});
 test("motion is switched off for people who ask for less of it, and keyboard focus is always visible", () => {
   const html = renderLoginPage(BASE);
   assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
@@ -438,17 +505,50 @@ test("motion is switched off for people who ask for less of it, and keyboard foc
 
 test("the code-ended page looks like the sign-in page it came from, in the app's words", () => {
   const html = renderScanEndedPage({ branding: { scanEndedHeading: "Code expiré", scanEndedText: "Retournez sur votre ordinateur." } });
-  assert.match(html, /<h1>Code expiré<\/h1>/);
-  assert.match(html, /<p>Retournez sur votre ordinateur\.<\/p>/);
-  assert.match(html, /class="tqa-ended"/);
-  assert.match(html, /<meta name="color-scheme" content="light dark">/);
+  assert.match(html, /<h1 class="tqa-ended-title">Code expiré<\/h1>/);
+  assert.match(html, /<p class="tqa-ended-text">Retournez sur votre ordinateur\.<\/p>/);
+  assert.match(html, /class="tqa-ticket tqa-ticket-ended"/);
+  assert.match(html, /<meta name="color-scheme" content="light">/);
   assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
   assert.match(html, /<meta name="robots" content="noindex, nofollow">/);
-  assert.match(renderScanEndedPage({ branding: { background: "#123456" } }), /<meta name="color-scheme" content="light">/);
+  assert.match(renderScanEndedPage({ branding: { accent: "#123456" } }), /--tqa-accent: #123456;/);
 });
 
-test("every default string the new page uses can be overridden, and none is left out of DEFAULT_BRANDING", () => {
-  for (const key of ["stepsLabel", "stepOneText", "stepTwoText", "stepThreeText"]) assert.equal(typeof DEFAULT_BRANDING[key], "string", key);
-  const html = renderLoginPage({ ...BASE, branding: { subtitle: "S1", mobileSubtitle: "S2", orScanText: "S3", qrHintText: "S4", waitingText: "S5" } });
-  for (const text of ["S1", "S2", "S3", "S4", "S5"]) assert.ok(html.includes(`>${text}<`), text);
+test("every default string the page uses can be overridden, and none is left out of DEFAULT_BRANDING", () => {
+  const keys = ["heading", "scanHeading", "tapHeading", "approvedHeading", "approvedSubheading", "expiredHeading", "expiredSubheading", "deniedHeading", "deniedSubheading", "kickerText", "viaText", "destinationLabel", "phoneLabel", "phoneText", "codeLabel", "codeText", "statusLabel", "stepLabel", "nextLabel", "nextText", "nextExpiredText", "nextDeniedText", "readyText", "waitingText", "scanText", "scanOtherText", "qrHintText", "orScanText", "tabletTitleText", "mobileSubtitle", "showQrText", "showAppText", "footText", "mobileFootText", "scanFootText", "stampText"];
+  for (const key of keys) assert.equal(typeof DEFAULT_BRANDING[key], "string", key);
+  const html = renderLoginPage({ ...BASE, branding: Object.fromEntries(keys.map((key, i) => [key, `X${i}X`])) });
+  keys.forEach((key, i) => assert.ok(html.includes(`X${i}X`), key));
+});
+
+test("branding.siteName wins over the name a hub supplies", () => {
+  const html = renderLoginPage({ ...PAGE, site: { name: "Hub's name", host: "docs.example.com" }, branding: { siteName: "Mine" } });
+  assert.match(html, /<span class="tqa-brand-name">Mine<\/span>/);
+  assert.match(html, /<title>Sign in to Mine<\/title>/);
+});
+
+test("the address sits in a browser-style pill: a lock of its own, then the host, and it says so to a screen reader", () => {
+  const html = renderLoginPage({ ...PAGE, site: { name: "Courier", host: "courier.jitdor.com" }, origin: "https://courier.jitdor.com" });
+  assert.match(
+    html,
+    /<p class="tqa-site" title="Secure connection to courier\.jitdor\.com"><span class="tqa-lock" role="img" aria-label="Secure connection"><\/span><span class="tqa-host">courier\.jitdor\.com<\/span><\/p>/
+  );
+  assert.match(html, /\.tqa-site \{[^}]*background: var\(--tqa-ink\); color: #fff;/, "dark pill, white text");
+  assert.match(html, /\.tqa-lock \{[^}]*border-right: 1px solid/, "the lock is its own segment");
+});
+
+test("the lock only claims a secure connection unless the page is known to be served over plain http", () => {
+  const open = renderLoginPage({ ...PAGE, origin: "http://localhost:3000", site: { host: "localhost:3000" } });
+  assert.match(open, /<p class="tqa-site tqa-site-open" title="Not a secure connection to localhost:3000">/);
+  assert.match(open, /aria-label="Not secure"/);
+  assert.match(open, /\.tqa-site-open \.tqa-lock::before \{[^}]*mask-image/, "an open padlock");
+  assert.doesNotMatch(renderLoginPage({ ...PAGE, origin: "https://x.example" }), /tqa-site-open"/);
+  assert.doesNotMatch(renderLoginPage({ ...PAGE, site: { host: "x.example" } }), /tqa-site-open"/, "no origin: not accused of being insecure");
+});
+
+test("the consent and error pages carry the same pill", async () => {
+  const { renderConsentPage, renderErrorPage } = await import("../src/oidc/consent-page.js");
+  const consent = renderConsentPage({ client: { client_name: "A", redirect_uris: ["https://a.example/cb"] }, scopes: ["openid"], session: { name: "N" }, requestId: "r", csrfToken: "c", actionPath: "/consent", origin: "https://auth.example.com" });
+  assert.match(consent, /<span class="tqa-lock" role="img" aria-label="Secure connection"><\/span><span class="tqa-host">auth\.example\.com<\/span>/);
+  assert.match(renderErrorPage("x", "y", { origin: "http://auth.example.com" }), /tqa-site tqa-site-open/);
 });

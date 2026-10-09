@@ -21,7 +21,7 @@ export default {
       hub: { url: env.HUB_URL, key: env.HUB_KEY },
       botUsername: env.TELEGRAM_BOT_USERNAME, // the QR points at the bot; the bot token is not needed here
       session: { secret: env.SESSION_SECRET },
-      branding: { title: "Docs — Sign in", heading: "📚 Internal docs" },
+      branding: { title: "Docs — Sign in" },
 
       // Optionally AND in a gate of your own (needs `botToken` if it talks to Telegram):
       //   authorize: chatMember({ chatId: env.CHAT_ID }),

@@ -104,10 +104,10 @@ if (!gate.ok) return gate.response;
 [Who gets in](#who-gets-in). [`docs/integrating-a-site.md`](integrating-a-site.md) is the
 step-by-step guide for whoever wires up a site.
 
-The sign-in page says which site it is: "Sign in to Internal docs", with the host it is served from
-(`docs.example.com`) under the heading. The name comes from the hub and is remembered for half a
-minute, so a rename in the console shows soon; if the hub cannot be asked the page still shows the
-host. Set `branding.heading` to use your own heading instead (the host is still shown). The page is
+The sign-in page says which site it is: a pass named "Internal docs" (its first letter is the mark in
+the corner), with the host it is served from (`docs.example.com`) top right and as the destination. The name comes from the hub and is remembered for half a minute, so a rename in the
+console shows soon; if the hub cannot be asked the page is named after the host. Set `branding.siteName`
+or `branding.title` to use your own instead (the host is still shown). The page is
 the site describing itself, so it helps people notice the wrong environment, but it is not a defence:
 a fake page can say anything. The bot's confirmation message, which a page cannot forge, is the check.
 

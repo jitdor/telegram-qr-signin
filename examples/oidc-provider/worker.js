@@ -53,8 +53,7 @@ function buildAuth(env) {
 
     branding: {
       title: "Sign in",
-      heading: "Sign in with Telegram",
-      subtitle: "Scan with the Telegram app. No phone number, nothing to type.",
+      siteName: "Identity provider",
     },
   });
 }

@@ -26,6 +26,7 @@ import { createSessionCodec, DEFAULT_MAX_AGE_SECONDS } from "./session.js";
 import { TelegramClient, displayName, toAuthUser } from "./telegram.js";
 import { anyUser, normalize as normalizeGate } from "./gates.js";
 import { renderLoginPage as defaultRenderLoginPage, renderScanEndedPage } from "./login-page.js";
+import { fontResponse } from "./fonts/index.js";
 
 /** The status values `/auth/poll` can return. A custom login page must understand all five. */
 export const POLL_STATUSES = ["pending", "confirmed", "expired", "invalid", "denied"];
@@ -128,6 +129,8 @@ export function createTelegramQrAuth(config) {
   const qrPath = joinPath(basePath, "qr");
   const scanPath = joinPath(basePath, "q");
   const scanPrefix = `${scanPath}/`;
+  const fontsPath = joinPath(basePath, "fonts");
+  const fontsPrefix = `${fontsPath}/`;
 
   /** `<namespace>_<token>` — what the QR carries and what `/start` hands back. */
   function payloadFor(token) {
@@ -202,6 +205,7 @@ export function createTelegramQrAuth(config) {
       qrSvg: svg,
       error,
       pollPath,
+      fontsPath,
       pollIntervalMs,
       branding,
       redirectTo: (to !== undefined && sameSitePath(to)) || redirectTo,
@@ -332,7 +336,7 @@ export function createTelegramQrAuth(config) {
         headers: { Location: deepLinkFor(token), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
       });
     }
-    return new Response(request.method === "HEAD" ? null : renderScanEndedPage({ branding }), {
+    return new Response(request.method === "HEAD" ? null : renderScanEndedPage({ branding, fontsPath }), {
       status: TOKEN_RE.test(token) ? 410 : 404,
       headers: {
         "Content-Type": "text/html; charset=UTF-8",
@@ -461,6 +465,7 @@ export function createTelegramQrAuth(config) {
     }
     if (url.pathname === loginPath) return loginResponse({ request });
     if (url.pathname.startsWith(scanPrefix)) return scan(request);
+    if (url.pathname.startsWith(fontsPrefix)) return fontResponse(request, fontsPath);
     if (url.pathname === qrPath) {
       // For apps that render their own sign-in UI and just want the ingredients.
       const { token, deepLink, appLink, qrLink, svg, expiresIn } = await beginLogin({ request });
@@ -472,7 +477,7 @@ export function createTelegramQrAuth(config) {
   return {
     namespace,
     basePath,
-    paths: { poll: pollPath, login: loginPath, logout: logoutPath, qr: qrPath, scan: scanPath },
+    paths: { poll: pollPath, login: loginPath, logout: logoutPath, qr: qrPath, scan: scanPath, fonts: fontsPath },
     cookieName: codec.cookieName,
     tokenTtlSeconds,
 

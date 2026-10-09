@@ -1,4 +1,6 @@
-// The default sign-in page: a QR, a status line, and a way in for people who cannot scan.
+// The default sign-in page, laid out as a boarding pass: a loud headline, a ticket carrying the
+// site's name, and a perforated stub with the QR on it (or, on a phone, the button that opens
+// Telegram). Nothing to type: the pass says so ("Phone number: Not needed", "Code to type: None").
 //
 // The QR image encodes an https link — the t.me deep link, or with `qrOrigin` set an address on
 // that domain which redirects to it — because that is what a phone camera can open. Clicking the
@@ -9,263 +11,465 @@
 // requests — it is one self-contained HTML string, which is what lets a consuming app be a single
 // file with no build step.
 //
+// The layout follows the device. A computer shows the QR and a small "open it here" link. A phone
+// leads with the Open Telegram button and tucks the QR behind "Signing in on another device?". A
+// tablet shows both, side by side in landscape and stacked in portrait.
+//
 // Replace it wholesale by passing `renderLoginPage` to createTelegramQrAuth; restyle it by passing
 // `branding`. A replacement can reuse the polling script via `pollScript()` and supply only the
 // markup — see POLL_STATUSES in provider.js for the contract it implements.
 
+import { fontFaceCss, fontPreloadLinks } from "./fonts/index.js";
+
 export const DEFAULT_BRANDING = {
   title: "Sign in",
-  heading: "Sign in with Telegram",
-  subtitle: "Scan the code with the Telegram app on your phone. No phone number, no code to type. If Telegram shows a Start button, tap it.",
-  mobileSubtitle: "Telegram opens. If you see a Start button, tap it, then come back to this tab.",
-  orScanText: "or scan from another phone",
-  qrHintText: "Telegram on this computer? Click the code.",
-  qrLinkTitle: "Open Telegram to sign in",
-  waitingText: "Waiting for Telegram…",
-  successText: "Signed in. Loading…",
+  // The headline, one line per field. The second line depends on the device and the sign-in state.
+  heading: "Your pass is ready.",
+  scanHeading: "Scan it to sign in.",
+  tapHeading: "Tap to sign in.",
+  approvedHeading: "Approved.",
+  approvedSubheading: "You're through.",
+  expiredHeading: "Pass expired.",
+  expiredSubheading: "Get a new one.",
+  deniedHeading: "No entry.",
+  deniedSubheading: "Not on the list.",
+  // The ticket.
+  kickerText: "Sign-in pass",
+  viaText: "Via Telegram",
+  destinationLabel: "Destination",
+  phoneLabel: "Phone number",
+  phoneText: "Not needed",
+  codeLabel: "Code to type",
+  codeText: "None",
+  statusLabel: "Status",
+  stepLabel: "Step",
+  stepText: "{n} of 3",
+  nextLabel: "Next",
+  nextText: "Tap Start, then Approve",
+  nextDoneText: "Opening {name}…",
+  nextExpiredText: "Get a new pass",
+  nextDeniedText: "Ask for access",
+  // What the Status field says. `waitingText` is "Ready" on a phone that is about to open Telegram.
+  waitingText: "Awaiting scan",
+  readyText: "Ready",
+  successText: "Signed in",
+  statusExpiredText: "Expired",
+  statusDeniedText: "Not allowed",
+  // Longer messages, shown on the stub when the sign-in ends badly.
   expiredText: "This sign-in code expired.",
   deniedText: "Your Telegram account isn't allowed to sign in here.",
   retryText: "Get a new code",
+  stampText: "Admitted",
+  // The stub.
+  scanText: "Scan with your phone",
+  scanOtherText: "Scan with the phone that has Telegram",
+  qrLinkTitle: "Open Telegram to sign in",
+  qrHintText: "Telegram on this computer? Open it here",
   mobileLinkText: "Open Telegram",
-  stepsLabel: "How it works",
-  stepOneText: "Open Telegram",
-  stepTwoText: "Approve in the chat",
-  stepThreeText: "You're in",
+  tabletLinkText: "Open Telegram on this tablet",
+  orScanText: "Or",
+  tabletTitleText: "Telegram on this tablet?",
+  mobileSubtitle: "Tap Start, then Approve. Come back here when you're done.",
+  showQrText: "Signing in on another device? Show the QR code",
+  showAppText: "Telegram is on this phone? Open it instead",
+  // The line along the bottom.
+  footText: "Keep this tab open. It signs you in by itself once you approve in Telegram.",
+  mobileFootText: "This page finishes signing you in when you come back.",
+  scanFootText: "Keep this screen on until the other phone approves.",
+  // The OIDC provider's consent screen and its error page (see oidc/consent-page.js).
+  consentHeading: "One last check.",
+  consentSubheading: "Let it sign you in?",
+  consentKickerText: "Access request",
+  consentWarnText: "This app is not operated by us. Authorize it only if you started this sign-in yourself.",
+  signedInAsLabel: "Signed in as",
+  returnsLabel: "Returns to",
+  accessLabel: "It will receive",
+  allowText: "Authorize",
+  denyText: "Cancel",
+  consentFootText: "You can withdraw this at any time. Withdrawing also signs the app out.",
+  errorHeading: "Sign-in could not continue",
+  errorCodeLabel: "Error code",
+  errorNoteText:
+    "Nothing was shared with the application that sent you here. If you arrived from a link you did not expect, close this page.",
+  // The page ending a scan that came too late (see renderScanEndedPage).
   scanEndedHeading: "This sign-in code has ended",
   scanEndedText: "It expired or was already used. Go back to the sign-in page on your computer for a new code.",
-  accent: "#2aabee",
-  background: "#0e1a2f",
-  gradientFrom: "#2aabee",
-  gradientTo: "#8b5cf6",
-  qrDark: "#0f172a",
-  qrLight: "#ffffff",
+  // The page itself is the accent colour; ink and paper follow from it. Text on the page switches
+  // between dark and white to stay legible, whatever accent is chosen.
+  accent: "#ee5a1c",
+  siteName: "",
   logoHtml: "",
   footerHtml: "",
   headHtml: "",
 };
 
-// Telegram's paper plane, drawn inline so the page makes no external requests.
-const PLANE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 3.6 2.9 10.8c-1 .4-1 1.8.1 2.1l4.6 1.5 1.8 5.6c.3.9 1.4 1.1 2 .4l2.6-2.7 4.8 3.5c.8.6 1.9.1 2.1-.9l3-15.1c.2-1.1-.8-2-1.9-1.6Zm-3.6 4.1-8.5 7.6-.4 3.4-1.2-4 9.6-6.9c.4-.3.9.2.5.6Z"/></svg>`;
+const INK = "#17130f";
 
-// Small glyphs, used as CSS masks so they take the colour of the text around them and need no
-// markup (which keeps the page's structure, and anything a test or a custom stylesheet relies on,
-// exactly as it was). A data: URI is not a network request.
-const mask = (paths) =>
-  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E${paths}%3C/svg%3E")`;
-const MASK_LOCK = mask("%3Crect x='4.5' y='11' width='15' height='10' rx='2.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E");
-const MASK_ALERT = mask("%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7.5v5.5M12 16.6v.1'/%3E");
+// Telegram's paper plane, drawn inline so the page makes no external requests. Only shown when the
+// site has no name to take a letter from.
+const PLANE_PATH = "M21.4 3.6 2.9 10.8c-1 .4-1 1.8.1 2.1l4.6 1.5 1.8 5.6c.3.9 1.4 1.1 2 .4l2.6-2.7 4.8 3.5c.8.6 1.9.1 2.1-.9l3-15.1c.2-1.1-.8-2-1.9-1.6Zm-3.6 4.1-8.5 7.6-.4 3.4-1.2-4 9.6-6.9c.4-.3.9.2.5.6Z";
+const PLANE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${PLANE_PATH}"/></svg>`;
+const ARROW_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>`;
+
+// A small glyph, used as a CSS mask so it takes the colour of the text around it and needs no
+// markup. A data: URI is not a network request.
+const MASK_LOCK =
+  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='11' width='15' height='10' rx='2.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E")`;
+
+const MASK_UNLOCK =
+  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='11' width='15' height='10' rx='2.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 7.6-1.7'/%3E%3C/svg%3E")`;
+
+/** The first letter or digit of a name, upper-cased, or "" when it has none. */
+function firstLetter(name) {
+  return String(name ?? "").match(/[\p{L}\p{N}]/u)?.[0]?.toUpperCase() ?? "";
+}
+
+/** "courier.jitdor.com" → "Courier": a name for a site that was only given an address. */
+function nameFromHost(host) {
+  const hostname = String(host ?? "").replace(/:\d+$/, "").toLowerCase();
+  if (!hostname || hostname === "localhost" || /^[\d.]+$/.test(hostname) || hostname.includes(":")) return "";
+  const label = hostname.replace(/^www\./, "").split(".")[0];
+  return label ? label[0].toUpperCase() + label.slice(1) : "";
+}
+
+function hostOf(origin) {
+  try {
+    return origin ? new URL(origin).host : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Dark ink or white, whichever reads better on `color` (a #rgb or #rrggbb value; anything else gets ink). */
+function textOn(color) {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
+  if (!match) return INK;
+  const hex = match[1].length === 3 ? [...match[1]].map((c) => c + c).join("") : match[1];
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const inkLuminance = 0.0086;
+  return (luminance + 0.05) / (inkLuminance + 0.05) >= 1.05 / (luminance + 0.05) ? INK : "#ffffff";
+}
 
 /**
- * A tab icon in the page's brand colours, unless the app already supplies one in `headHtml`. An
- * inline data: URI, so the browser does not go looking for /favicon.ico.
+ * A tab icon: the site's letter in the accent colour on a dark tile, unless the app already supplies
+ * one in `headHtml`. An inline data: URI, so the browser does not go looking for /favicon.ico.
  */
-function faviconLink(branding) {
+function faviconLink(branding, letter) {
   if (/rel\s*=\s*["']?(?:shortcut\s+)?icon/i.test(branding.headHtml)) return "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${branding.gradientFrom}"/><stop offset="1" stop-color="${branding.gradientTo}"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><g transform="translate(14 14) scale(1.5)"><path fill="#fff" d="M21.4 3.6 2.9 10.8c-1 .4-1 1.8.1 2.1l4.6 1.5 1.8 5.6c.3.9 1.4 1.1 2 .4l2.6-2.7 4.8 3.5c.8.6 1.9.1 2.1-.9l3-15.1c.2-1.1-.8-2-1.9-1.6Zm-3.6 4.1-8.5 7.6-.4 3.4-1.2-4 9.6-6.9c.4-.3.9.2.5.6Z"/></g></svg>`;
+  const accent = escapeHtml(branding.accent);
+  const glyph = letter
+    ? `<text x="32" y="47" text-anchor="middle" font-family="Arial Black,Impact,Arial,sans-serif" font-weight="900" font-size="42" fill="${accent}">${escapeHtml(letter)}</text>`
+    : `<g transform="translate(14 14) scale(1.5)"><path fill="${accent}" d="${PLANE_PATH}"/></g>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="${INK}"/>${glyph}</svg>`;
   return `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(svg)}">`;
 }
 
 /**
- * The sign-in page's stylesheet. The default look follows the visitor's light or dark setting; an
- * app that sets its own `branding.background` keeps a light card on that background instead, since
- * a dark card could not promise to stay readable on a colour it did not choose.
+ * The stylesheet shared by the sign-in page and the code-ended page.
+ *
+ * The same markup serves every device; what shows is decided here. Three conditions pick the layout:
+ * a pointer device (a computer), a coarse-pointer device narrower than 640px (a phone), and a
+ * coarse-pointer device wider than that (a tablet, laid out beside the QR at 900px and up and
+ * stacked below it). `data-tqa-state` on <html> (set by the polling script) drives the endings, and
+ * `data-tqa-view` picks between the button and the QR on a phone.
  */
-function loginStyles(branding, themed) {
+function loginStyles(branding, fontsPath) {
   return `
+  ${fontFaceCss(fontsPath)}
   :root {
-    color-scheme: ${themed ? "light dark" : "light"};
+    color-scheme: light;
     --tqa-accent: ${branding.accent};
-    --tqa-a: ${branding.gradientFrom};
-    --tqa-b: ${branding.gradientTo};
-    --tqa-grad: linear-gradient(135deg, var(--tqa-a), var(--tqa-b));
-    /* Where white text sits on the brand colours (the mark, the buttons, the ticks) they are darkened a
-       little, because Telegram's own blue is too light to carry white text legibly. The vivid pair above
-       is for glows and lines, which carry no text. */
-    --tqa-grad-ink: linear-gradient(135deg, color-mix(in srgb, var(--tqa-a) 72%, #000), color-mix(in srgb, var(--tqa-b) 82%, #000));
-    --tqa-bg: ${themed ? "#e8edf6" : branding.background};
-    --tqa-card: #ffffff;
-    --tqa-edge: rgba(15, 23, 42, 0.07);
-    --tqa-ink: #0f172a;
-    --tqa-muted: #566175;
-    --tqa-rule: #e4e9f1;
-    --tqa-tile: #f3f6fb;
-    --tqa-ok: #166534;
-    --tqa-bad: #b42318;
-    --tqa-grid: rgba(70, 90, 130, 0.09);
-    --tqa-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 34px 70px -30px rgba(15, 23, 42, 0.5), 0 10px 26px -14px rgba(15, 23, 42, 0.25);
-    --tqa-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --tqa-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --tqa-on: ${textOn(branding.accent)};
+    --tqa-ink: ${INK};
+    --tqa-paper: #fbfaf6;
+    --tqa-muted: #6a6358;
+    --tqa-rule: #cdc7b8;
+    --tqa-ok: #1d6b43;
+    --tqa-bad: #b3261e;
+    --tqa-notch: 14px;
+    /* The bundled fonts (served by the app itself, see src/fonts), then the best the system has. A site
+       that wants its own can set --tqa-display, --tqa-font and --tqa-mono from branding.headHtml. */
+    --tqa-display: "TQA Display", "Archivo Black", Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", system-ui, sans-serif;
+    --tqa-font: "TQA Sans", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --tqa-mono: "TQA Mono", "Google Sans Code", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   }
-${
-  themed
-    ? `  @media (prefers-color-scheme: dark) {
-    :root {
-      --tqa-bg: ${branding.background};
-      --tqa-card: rgba(20, 29, 49, 0.74);
-      --tqa-edge: rgba(255, 255, 255, 0.1);
-      --tqa-ink: #f2f6fc;
-      --tqa-muted: #9eabc1;
-      --tqa-rule: rgba(255, 255, 255, 0.1);
-      --tqa-tile: rgba(255, 255, 255, 0.055);
-      --tqa-ok: #4ade80;
-      --tqa-bad: #fca5a5;
-      --tqa-grid: rgba(255, 255, 255, 0.045);
-      --tqa-shadow: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 44px 90px -34px rgba(0, 0, 0, 0.8);
-    }
-    .tqa-card { -webkit-backdrop-filter: blur(22px) saturate(1.5); backdrop-filter: blur(22px) saturate(1.5); }
-  }
-`
-    : ""
-}  *, *::before, *::after { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: border-box; }
   html, body { min-height: 100%; }
   body {
-    margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; overflow-x: hidden;
-    padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
-    background: var(--tqa-bg); color: var(--tqa-ink);
-    font: 16px/1.5 var(--tqa-font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    margin: 0; min-height: 100vh; min-height: 100dvh; overflow-x: hidden;
+    background-color: var(--tqa-accent);
+    background-image: radial-gradient(color-mix(in srgb, var(--tqa-on) 24%, transparent) 1.1px, transparent 1.6px);
+    background-size: 22px 22px;
+    color: var(--tqa-on); font: 16px/1.5 var(--tqa-font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
   }
-  /* Two soft glows in the brand colours, and a faint grid fading out from the card: depth without noise. */
-  body::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none;
-    background:
-      radial-gradient(60% 55% at 85% 8%, color-mix(in srgb, var(--tqa-a) 30%, transparent), transparent 70%),
-      radial-gradient(55% 50% at 6% 100%, color-mix(in srgb, var(--tqa-b) 26%, transparent), transparent 70%);
+  .tqa-page {
+    display: flex; flex-direction: column; width: min(100%, 47rem); min-height: 100vh; min-height: 100dvh; margin: 0 auto;
+    padding: max(20px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
   }
-  body::after {
-    content: ""; position: fixed; inset: 0; pointer-events: none;
-    background-image: linear-gradient(var(--tqa-grid) 1px, transparent 1px), linear-gradient(90deg, var(--tqa-grid) 1px, transparent 1px);
-    background-size: 46px 46px;
-    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 0%, transparent 75%);
-    mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 0%, transparent 75%);
-  }
-  .tqa-card {
-    position: relative; z-index: 1; width: 100%; max-width: 25rem; padding: 30px 26px 24px;
-    background: var(--tqa-card); border: 1px solid var(--tqa-edge); border-radius: 28px; box-shadow: var(--tqa-shadow);
-    animation: tqa-rise 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  }
-  /* A thin line of the brand gradient along the top edge. */
-  .tqa-card::before {
-    content: ""; position: absolute; inset: 0 30px auto; height: 1px; opacity: 0.8;
-    background: linear-gradient(90deg, transparent, var(--tqa-a), var(--tqa-b), transparent);
-  }
-  .tqa-head { display: flex; flex-direction: column; align-items: center; text-align: center; padding-bottom: 20px; margin-bottom: 22px; border-bottom: 1px solid var(--tqa-rule); }
+  .tqa-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 14px; min-width: 0; }
+  .tqa-brand { display: flex; align-items: center; gap: 12px; min-width: 0; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; }
+  .tqa-brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tqa-mark {
-    display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 16px; border-radius: 17px; color: #fff;
-    background: var(--tqa-grad-ink); font-weight: 700; font-size: 1.4rem; line-height: 1; letter-spacing: -0.02em;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, 0 14px 28px -12px var(--tqa-a);
+    flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px;
+    background: var(--tqa-ink); color: var(--tqa-accent); font: 900 1.5rem/1 var(--tqa-display);
   }
-  .tqa-mark svg { width: 26px; height: 26px; fill: currentColor; }
-  .tqa-head h1 { margin: 0; font-size: 1.5rem; line-height: 1.18; font-weight: 700; letter-spacing: -0.028em; text-wrap: balance; }
+  .tqa-mark svg { width: 22px; height: 22px; fill: currentColor; }
+  /* The address, in the shape of a browser's address bar: a lock on its own segment, then the host. */
   .tqa-site {
-    display: flex; align-items: center; gap: 7px; width: fit-content; max-width: 100%; margin: 12px 0 0; padding: 5px 12px 5px 10px;
-    border: 1px solid var(--tqa-rule); border-radius: 999px; background: var(--tqa-tile); color: var(--tqa-muted);
-    font: 600 0.78rem/1.3 var(--tqa-mono); overflow-wrap: anywhere;
+    display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 0 auto; border-radius: 999px; overflow: hidden;
+    background: var(--tqa-ink); color: #fff; font: 600 0.86rem/1.2 var(--tqa-font); letter-spacing: -0.005em;
+    box-shadow: 0 0 0 1px color-mix(in srgb, #fff 14%, transparent) inset;
   }
-  .tqa-site::before {
-    content: ""; flex: none; width: 13px; height: 13px; background: var(--tqa-ok);
+  .tqa-lock { flex: none; display: grid; place-items: center; width: 30px; border-right: 1px solid color-mix(in srgb, #fff 24%, transparent); }
+  .tqa-lock::before {
+    content: ""; width: 14px; height: 14px; background: #7ee2a8;
     -webkit-mask: ${MASK_LOCK} center / contain no-repeat; mask: ${MASK_LOCK} center / contain no-repeat;
   }
-  .tqa-sub { margin: 14px 0 0; color: var(--tqa-muted); font-size: 0.92rem; text-wrap: balance; }
+  .tqa-site-open .tqa-lock::before { background: #ffc15e; -webkit-mask-image: ${MASK_UNLOCK}; mask-image: ${MASK_UNLOCK}; }
+  /* Lower-case text has its weight in the x-height, below the middle of the line, and browsers put text on whole device pixels, so padding alone
+     jumps between "a little low" and "too high". Measured on 1x, 2x and 3x screens, these values land the x-height within a third of a pixel of the middle. */
+  .tqa-host { min-width: 0; padding: 8.1px 12px 8.4px 10px; overflow-wrap: anywhere; }
+  .tqa-stage { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(1.5rem, 5vh, 3.5rem) 0 1.5rem; }
+  .tqa-headline {
+    margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 11.4vw, 4rem)/0.94 var(--tqa-display);
+    letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance;
+  }
+  .tqa-hl { display: block; }
   .tqa-error {
-    position: relative; margin: 0 0 18px; padding: 12px 14px 12px 42px; border-radius: 14px; font-size: 0.88rem; color: var(--tqa-bad);
-    background: color-mix(in srgb, var(--tqa-bad) 11%, transparent); border: 1px solid color-mix(in srgb, var(--tqa-bad) 28%, transparent);
+    margin: 0 0 14px; padding: 12px 16px; border-radius: 14px; background: var(--tqa-ink); color: var(--tqa-paper);
+    font: 500 0.85rem/1.45 var(--tqa-mono);
   }
-  .tqa-error::before {
-    content: ""; position: absolute; left: 14px; top: 13px; width: 18px; height: 18px; background: currentColor;
-    -webkit-mask: ${MASK_ALERT} center / contain no-repeat; mask: ${MASK_ALERT} center / contain no-repeat;
+
+  /* The ticket. */
+  .tqa-ticket {
+    position: relative; display: grid; grid-template-columns: minmax(0, 1fr); color: var(--tqa-ink); background: var(--tqa-paper); border-radius: 26px;
+    box-shadow: 0 2px 0 var(--tqa-ink), 0 38px 50px -28px color-mix(in srgb, var(--tqa-ink) 55%, transparent);
+    animation: tqa-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
+  .tqa-main { min-width: 0; padding: 26px 24px 24px; container-type: inline-size; }
+  .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.66rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
+  .tqa-name {
+    margin: 0.6rem 0 0; padding-bottom: 1rem; border-bottom: 2px solid var(--tqa-ink);
+    font: 900 calc(min(30cqw, 9rem) * var(--tqa-name-scale, 1))/0.9 var(--tqa-display); letter-spacing: -0.04em; text-transform: uppercase;
+    overflow-wrap: break-word; text-wrap: balance;
+  }
+  .tqa-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; margin: 18px 0 0; }
+  .tqa-field { min-width: 0; }
+  .tqa-field dt { font: 500 0.64rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
+  .tqa-field dd { margin: 4px 0 0; font-weight: 600; font-size: 1rem; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; text-wrap: balance; }
+  .tqa-f-dest { grid-column: 1 / -1; }
+  .tqa-f-next { display: none; }
+  .tqa-status { display: inline-flex; align-items: center; gap: 0.5em; }
+  .tqa-status::before { content: ""; flex: none; width: 0.6em; height: 0.6em; background: var(--tqa-accent); }
+
+  /* Which words show depends on how the sign-in is going: the polling script sets data-tqa-state. */
+  .tqa-v { display: none; }
+  [data-tqa-state="waiting"] .tqa-v-wait, [data-tqa-state="signed-in"] .tqa-v-ok,
+  [data-tqa-state="expired"] .tqa-v-expired, [data-tqa-state="denied"] .tqa-v-denied { display: inline; }
+  [data-tqa-state="signed-in"] .tqa-status::before { background: var(--tqa-ok); }
+  [data-tqa-state="expired"] .tqa-status::before, [data-tqa-state="denied"] .tqa-status::before { background: var(--tqa-bad); }
+  .tqa-h-tap, .tqa-st-ready { display: none; }
+
+  /* The stub: the part you tear off. A dashed edge with a bite out of each end. */
+  .tqa-stub {
+    position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 24px 28px;
+    border-top: 1.5px dashed var(--tqa-rule);
+  }
+  .tqa-stub::before, .tqa-stub::after {
+    content: ""; position: absolute; width: calc(var(--tqa-notch) * 2); height: calc(var(--tqa-notch) * 2); border-radius: 50%;
+    background: var(--tqa-accent); pointer-events: none;
+  }
+  .tqa-stub::before { top: calc(var(--tqa-notch) * -1 + 0.75px); left: calc(var(--tqa-notch) * -1); }
+  .tqa-stub::after { top: calc(var(--tqa-notch) * -1 + 0.75px); right: calc(var(--tqa-notch) * -1); }
+  .tqa-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+  .tqa-qr-link { display: block; width: min(100%, 12.5rem); line-height: 0; transition: transform 0.2s ease; }
+  .tqa-qr-link:hover { transform: translateY(-2px); }
+  .tqa-qr svg { display: block; width: 100%; height: auto; }
+  /* The code sits on the ticket's paper, with the three finder squares in the page colour. They stay
+     dark enough to scan: a scanner reads brightness, not hue. */
+  .tqa-qr svg > rect:first-child { fill: var(--tqa-paper); }
+  .tqa-qr svg > path { fill: var(--tqa-ink); }
+  .tqa-qr svg .qr-eye { fill: color-mix(in srgb, var(--tqa-accent) 88%, #000); }
+  .tqa-cap { margin: 0; font: 500 0.68rem/1.4 var(--tqa-mono); letter-spacing: 0.15em; text-transform: uppercase; text-align: center; text-wrap: balance; }
+  .tqa-cap-other { display: none; }
+  .tqa-here, .tqa-switch {
+    appearance: none; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; color: var(--tqa-ink);
+    font: 600 0.88rem/1.35 var(--tqa-font); letter-spacing: -0.005em; text-align: center;
+    text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px;
+  }
+  .tqa-switch { display: none; align-self: flex-start; text-align: left; }
+  .tqa-app { display: none; flex-direction: column; gap: 12px; width: 100%; }
+  .tqa-app-title { display: none; margin: 0; font: 900 clamp(1.5rem, 5vw, 1.9rem)/0.95 var(--tqa-display); letter-spacing: -0.02em; text-transform: uppercase; }
   .tqa-open, .tqa-retry {
-    display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 56px; padding: 0 22px;
-    border: 0; border-radius: 18px; color: #fff; background: var(--tqa-grad-ink); cursor: pointer; text-decoration: none;
-    font: 600 1.05rem/1.2 var(--tqa-font); letter-spacing: -0.005em;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, 0 16px 30px -14px var(--tqa-a);
-    transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
+    display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 54px; padding: 0 20px;
+    border: 0; border-radius: 16px; background: var(--tqa-ink); color: var(--tqa-paper); cursor: pointer; text-decoration: none;
+    font: 600 1.1rem/1.2 var(--tqa-font); letter-spacing: -0.01em; transition: transform 0.15s ease, filter 0.15s ease;
   }
-  .tqa-open:hover, .tqa-retry:hover { filter: brightness(1.06) saturate(1.05); }
+  .tqa-open:hover, .tqa-retry:hover { filter: brightness(1.25); }
   .tqa-open:active, .tqa-retry:active { transform: scale(0.985); }
-  .tqa-open svg { width: 21px; height: 21px; fill: currentColor; flex: none; }
-  .tqa-how { margin: 14px 0 0; color: var(--tqa-muted); font-size: 0.86rem; text-align: center; text-wrap: balance; }
-  .tqa-or { align-items: center; gap: 14px; margin: 24px 0 18px; color: var(--tqa-muted); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; }
-  .tqa-or::before, .tqa-or::after { content: ""; flex: 1; height: 1px; background: var(--tqa-rule); }
-  .tqa-qr { display: flex; justify-content: center; }
-  /* The code sits on a white tile whatever the theme, because a QR needs a light quiet zone. The
-     corner brackets and the sweeping line say "point a camera here" without being an animation
-     anyone has to watch. */
-  .tqa-qr-link {
-    position: relative; display: block; line-height: 0; padding: 18px; border-radius: 24px; background: #fff;
-    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08), 0 20px 44px -22px rgba(15, 23, 42, 0.6);
-    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.3s ease, filter 0.3s ease;
+  .tqa-open svg { flex: none; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .tqa-lbl-long { display: none; }
+  .tqa-how { display: none; margin: 0; font: 400 0.75rem/1.6 var(--tqa-mono); color: var(--tqa-muted); text-align: center; }
+  .tqa-or {
+    display: none; align-items: center; gap: 12px; width: 100%; font: 500 0.75rem/1 var(--tqa-mono); letter-spacing: 0.22em; text-transform: uppercase; color: var(--tqa-muted);
   }
-  .tqa-qr-link:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px color-mix(in srgb, var(--tqa-accent) 55%, transparent), 0 26px 50px -22px color-mix(in srgb, var(--tqa-accent) 70%, #000); }
-  .tqa-qr-link::before {
-    content: ""; position: absolute; inset: 7px; pointer-events: none; border-radius: 4px;
-    --c: var(--tqa-accent);
-    background:
-      linear-gradient(var(--c), var(--c)) top left / 20px 3px no-repeat, linear-gradient(var(--c), var(--c)) top left / 3px 20px no-repeat,
-      linear-gradient(var(--c), var(--c)) top right / 20px 3px no-repeat, linear-gradient(var(--c), var(--c)) top right / 3px 20px no-repeat,
-      linear-gradient(var(--c), var(--c)) bottom left / 20px 3px no-repeat, linear-gradient(var(--c), var(--c)) bottom left / 3px 20px no-repeat,
-      linear-gradient(var(--c), var(--c)) bottom right / 20px 3px no-repeat, linear-gradient(var(--c), var(--c)) bottom right / 3px 20px no-repeat;
+  .tqa-or::before, .tqa-or::after { content: ""; flex: 1; border-top: 1.5px dashed var(--tqa-rule); }
+  .tqa-msg { display: none; width: 100%; margin: 0; font: 500 0.78rem/1.5 var(--tqa-mono); text-align: center; color: var(--tqa-bad); }
+  .tqa-stamp { display: none; width: 100%; min-height: 9rem; place-content: center; justify-items: center; gap: 16px; text-align: center; }
+  .tqa-stamp-mark {
+    display: inline-block; padding: 0.12em 0.4em 0.08em; border: 0.14em solid var(--tqa-ok); border-radius: 0.3em; color: var(--tqa-ok);
+    font: 900 clamp(1.9rem, 8vw, 2.6rem)/1 var(--tqa-display); letter-spacing: -0.01em; text-transform: uppercase; transform: rotate(-6deg);
+    animation: tqa-stamp 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) both;
   }
-  .tqa-qr-link::after {
-    content: ""; position: absolute; left: 16px; right: 16px; top: 16px; height: 2px; border-radius: 2px; pointer-events: none; opacity: 0;
-    background: linear-gradient(90deg, transparent, var(--tqa-accent), transparent);
-    box-shadow: 0 0 16px 3px color-mix(in srgb, var(--tqa-accent) 55%, transparent);
-    animation: tqa-sweep 3.2s ease-in-out infinite;
-  }
-  .tqa-qr svg { width: 13.5rem; max-width: 100%; height: auto; display: block; }
-  .tqa-hint { margin: 16px 0 0; color: var(--tqa-muted); font-size: 0.82rem; text-align: center; }
-  .tqa-steps {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 22px 0 0; padding: 18px 0 0; list-style: none;
-    border-top: 1px solid var(--tqa-rule); counter-reset: tqa-step; transition: opacity 0.3s ease;
-  }
-  .tqa-steps li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--tqa-muted); font-size: 0.75rem; font-weight: 600; line-height: 1.25; }
-  .tqa-steps li::before {
-    counter-increment: tqa-step; content: counter(tqa-step); display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
-    font-size: 0.74rem; font-weight: 700; color: var(--tqa-muted); background: var(--tqa-tile); border: 1px solid var(--tqa-rule);
-    transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
-  }
-  .tqa-steps li:not(:last-child)::after { content: ""; position: absolute; top: 13px; left: calc(50% + 20px); right: calc(-50% + 20px); height: 1px; background: var(--tqa-rule); }
-  [data-tqa-state="waiting"] .tqa-steps li:nth-child(-n + 2) { color: var(--tqa-ink); }
-  [data-tqa-state="waiting"] .tqa-steps li:nth-child(-n + 2)::before { color: var(--tqa-ink); border-color: color-mix(in srgb, var(--tqa-accent) 55%, transparent); background: color-mix(in srgb, var(--tqa-accent) 10%, transparent); }
-  [data-tqa-state="signed-in"] .tqa-steps li { color: var(--tqa-ink); }
-  [data-tqa-state="signed-in"] .tqa-steps li::before { content: "✓"; color: #fff; border-color: transparent; background: var(--tqa-grad-ink); box-shadow: 0 8px 16px -8px var(--tqa-a); }
-  [data-tqa-state="expired"] .tqa-steps, [data-tqa-state="denied"] .tqa-steps { opacity: 0.4; }
-  .tqa-status {
-    display: flex; align-items: center; justify-content: center; gap: 9px; width: fit-content; max-width: 100%; min-height: 36px; margin: 20px auto 0; padding: 7px 16px;
-    border: 1px solid var(--tqa-rule); border-radius: 20px; text-wrap: balance; background: var(--tqa-tile); color: var(--tqa-muted); font-size: 0.85rem; font-weight: 500; text-align: center;
-    transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
-  }
-  .tqa-status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--tqa-accent); animation: tqa-pulse 1.6s ease-in-out infinite; }
-  [data-tqa-state="signed-in"] .tqa-status { color: var(--tqa-ok); border-color: color-mix(in srgb, var(--tqa-ok) 35%, transparent); background: color-mix(in srgb, var(--tqa-ok) 10%, transparent); }
-  [data-tqa-state="signed-in"] .tqa-status::before { background: var(--tqa-ok); animation: none; }
-  [data-tqa-state="expired"] .tqa-status, [data-tqa-state="denied"] .tqa-status { color: var(--tqa-bad); border-color: color-mix(in srgb, var(--tqa-bad) 32%, transparent); background: color-mix(in srgb, var(--tqa-bad) 9%, transparent); }
-  [data-tqa-state="expired"] .tqa-status::before, [data-tqa-state="denied"] .tqa-status::before { background: var(--tqa-bad); animation: none; }
-  [data-tqa-state="signed-in"] .tqa-qr-link { opacity: 0.3; filter: grayscale(0.7) blur(1px); }
-  [data-tqa-state="signed-in"] .tqa-qr-link::after, [data-tqa-state="denied"] .tqa-qr-link::after { animation: none; opacity: 0; }
-  .tqa-foot { margin: 18px 0 0; color: var(--tqa-muted); font-size: 0.75rem; text-align: center; }
-  a:focus-visible, button:focus-visible { outline: 3px solid color-mix(in srgb, var(--tqa-accent) 75%, transparent); outline-offset: 3px; }
+  .tqa-stamp-note { margin: 0; font: 500 0.72rem/1.4 var(--tqa-mono); color: var(--tqa-muted); }
+  .tqa-foot { margin: 0; padding-top: 1rem; font: 500 0.75rem/1.5 var(--tqa-mono); }
+  .tqa-foot > span { display: none; }
+  .tqa-foot > .tqa-foot-desk { display: inline; }
+  .tqa-foot-extra { margin: 0.5rem 0 0; font-size: 0.8rem; }
+  a:focus-visible, button:focus-visible { outline: 3px solid var(--tqa-ink); outline-offset: 3px; }
+  .tqa-open:focus-visible, .tqa-retry:focus-visible { outline-color: var(--tqa-accent); box-shadow: 0 0 0 3px var(--tqa-ink); }
   [hidden] { display: none !important; }
-  @keyframes tqa-rise { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
-  @keyframes tqa-pulse { 50% { opacity: 0.25; } }
-  @keyframes tqa-sweep { 0% { top: 16px; opacity: 0; } 14% { opacity: 0.95; } 50% { top: calc(100% - 18px); opacity: 0.95; } 64% { opacity: 0; } 100% { top: 16px; opacity: 0; } }
-  /* Phones and tablets can't scan their own screen: lead with the button, keep the QR for a second device. */
-  .tqa-touch-only { display: none; }
+  @keyframes tqa-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes tqa-stamp { from { opacity: 0; transform: rotate(-14deg) scale(1.7); } to { opacity: 1; transform: rotate(-6deg) scale(1); } }
+
+  /* Wide enough for the stub to sit beside the ticket. */
+  @media (min-width: 640px) {
+    .tqa-main { padding: 30px 36px 28px; }
+    /* Columns the width of what is in them, sharing out whatever is left, so an address or "Tap Start, then Approve" stays on one line when it fits. */
+    .tqa-fields { grid-template-columns: repeat(3, auto); column-gap: 14px; }
+    .tqa-f-dest { grid-column: auto; }
+    .tqa-f-next { display: block; }
+    .tqa-field dd { font-size: 0.9rem; }
+  }
+  @media (min-width: 900px) {
+    .tqa-ticket { grid-template-columns: minmax(0, 1fr) clamp(15rem, 33%, 19rem); }
+    .tqa-stub { justify-content: center; padding: 28px 22px; border-top: 0; border-left: 1.5px dashed var(--tqa-rule); }
+    .tqa-stub::before { top: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
+    .tqa-stub::after { top: auto; right: auto; bottom: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
+    .tqa-stamp-mark { font-size: 1.8rem; }
+    /* Room to spare: the type steps down so the ticket reads as a ticket, not as a form. */
+    .tqa-headline { font-size: clamp(2rem, 11.4vw, 4rem); }
+    .tqa-name { font-size: calc(min(25cqw, 7rem) * var(--tqa-name-scale, 1)); }
+    .tqa-kicker, .tqa-field dt { font-size: 0.6rem; }
+    .tqa-field dd { font-size: 0.8rem; }
+    .tqa-cap { font-size: 0.62rem; }
+    .tqa-here, .tqa-switch { font-size: 0.8rem; }
+    .tqa-foot { font-size: 0.68rem; }
+    .tqa-how { font-size: 0.7rem; }
+    .tqa-msg { font-size: 0.74rem; }
+    .tqa-open, .tqa-retry { min-height: 50px; font-size: 1rem; }
+  }
+
+  /* Phones and tablets can't scan their own screen: they get the button. */
   @media (hover: none) and (pointer: coarse) {
-    .tqa-touch-only { display: block; }
-    .tqa-open.tqa-touch-only, .tqa-or.tqa-touch-only { display: flex; }
-    .tqa-pointer-only { display: none; }
-    .tqa-qr svg { width: 10.5rem; }
-    .tqa-qr-link { padding: 14px; }
+    .tqa-here { display: none; }
+    .tqa-app, .tqa-or { display: flex; }
     .tqa-qr-link:hover { transform: none; }
   }
-  @media (max-width: 380px) { .tqa-card { padding: 26px 20px 20px; border-radius: 24px; } .tqa-head h1 { font-size: 1.35rem; } }
+  @media (hover: none) and (pointer: coarse) and (min-width: 640px) {
+    .tqa-page { width: min(100%, 62rem); padding-left: 40px; padding-right: 40px; }
+  }
+  /* Tablet, held upright: the stub runs along the bottom with the QR on one side and the button on the other. */
+  @media (hover: none) and (pointer: coarse) and (min-width: 640px) and (max-width: 899.98px) {
+    .tqa-stub { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 24px; padding: 28px 36px; }
+    .tqa-stub::before { left: calc(var(--tqa-notch) * -1); }
+    .tqa-or { flex-direction: column; align-self: stretch; width: auto; }
+    .tqa-or::before, .tqa-or::after { border-top: 0; border-left: 1.5px dashed var(--tqa-rule); min-height: 1.5rem; }
+    .tqa-app-title, .tqa-how { display: block; }
+    .tqa-how { text-align: left; }
+    .tqa-qr-link { width: 11.5rem; }
+  }
+  /* Tablet, held sideways: the button goes under the QR on the stub. */
+  @media (hover: none) and (pointer: coarse) and (min-width: 900px) {
+    .tqa-lbl-short { display: none; }
+    .tqa-lbl-long { display: inline; }
+    .tqa-qr-link { width: min(100%, 9.5rem); }
+    .tqa-stub { gap: 10px; padding-top: 22px; padding-bottom: 22px; }
+    .tqa-open { font-size: 0.9rem; padding: 0 14px; gap: 8px; min-height: 44px; }
+  }
+  /* Phone: the button first, and the QR for a second device one tap away. */
+  @media (hover: none) and (pointer: coarse) and (max-width: 639.98px) {
+    .tqa-page { padding-left: 16px; padding-right: 16px; }
+    .tqa-stub { align-items: stretch; padding: 24px 20px 22px; }
+    .tqa-or { display: none; }
+    .tqa-qr-link { width: min(100%, 15rem); }
+    .tqa-how { display: block; }
+    .tqa-foot { text-align: center; }
+    .tqa-foot > .tqa-foot-desk { display: none; }
+    html[data-tqa-view="app"] .tqa-qr { display: none; }
+    html[data-tqa-view="app"] .tqa-switch-qr { display: block; }
+    html[data-tqa-view="app"] .tqa-foot > .tqa-foot-app { display: inline; }
+    html[data-tqa-view="app"] .tqa-h-scan, html[data-tqa-view="app"] .tqa-st-scan { display: none; }
+    html[data-tqa-view="app"] .tqa-h-tap, html[data-tqa-view="app"] .tqa-st-ready { display: inline; }
+    html[data-tqa-view="qr"] .tqa-app { display: none; }
+    html[data-tqa-view="qr"] .tqa-switch-app { display: block; align-self: center; text-align: center; }
+    html[data-tqa-view="qr"] .tqa-foot > .tqa-foot-qr { display: inline; }
+    html[data-tqa-view="qr"] .tqa-cap-main { display: none; }
+    html[data-tqa-view="qr"] .tqa-cap-other { display: inline; }
+    /* Showing the code to another phone needs no headline: the code is the point. It stays for screen readers. */
+    html[data-tqa-state="waiting"][data-tqa-view="qr"] .tqa-headline { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  }
+
+  /* How it ends. */
+  html[data-tqa-state="signed-in"] .tqa-stub > :not(.tqa-stamp),
+  html[data-tqa-state="signed-in"] .tqa-foot { display: none !important; }
+  html[data-tqa-state="signed-in"] .tqa-stamp { display: grid; }
+  html[data-tqa-state="signed-in"] .tqa-stub, html[data-tqa-state="expired"] .tqa-stub, html[data-tqa-state="denied"] .tqa-stub { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+  html[data-tqa-state="expired"] .tqa-stub > :not(.tqa-qr):not(.tqa-msg-expired),
+  html[data-tqa-state="denied"] .tqa-stub > :not(.tqa-msg-denied) { display: none !important; }
+  html[data-tqa-state="expired"] .tqa-qr { display: flex !important; max-width: 20rem; }
+  html[data-tqa-state="expired"] .tqa-msg-expired, html[data-tqa-state="denied"] .tqa-msg-denied { display: block; }
   @media (prefers-reduced-motion: reduce) {
-    .tqa-card, .tqa-qr-link::after, .tqa-status::before { animation: none; }
-    .tqa-qr-link::after { opacity: 0; }
-    .tqa-open, .tqa-retry, .tqa-qr-link, .tqa-steps, .tqa-steps li::before, .tqa-status { transition: none; }
+    .tqa-ticket, .tqa-stamp-mark { animation: none; }
+    .tqa-open, .tqa-retry, .tqa-qr-link { transition: none; }
     .tqa-open:active, .tqa-retry:active, .tqa-qr-link:hover { transform: none; }
   }
 `;
+}
+
+/**
+ * What the pass calls the site: its name (`branding.siteName`, else the hub's `site.name`, else the first
+ * label of the host), the address it is served from (`site.host`, else the host of `origin`), and the
+ * letter that marks it. Shared by every page that wears the pass.
+ */
+export function resolveSite({ branding, site, origin }) {
+  const host = site?.host || hostOf(origin);
+  const name = String(branding.siteName || site?.name || nameFromHost(host) || "").trim();
+  // The lock claims a secure connection, so it only says so unless the page is known to be served over plain http.
+  return { host, name, letter: firstLetter(name), secure: !/^http:/i.test(String(origin ?? "")) };
+}
+
+/** The CSS scale that keeps a long name inside the ticket: 1 up to seven characters, smaller after. */
+export function nameScaleFor(name) {
+  const length = [...name].length;
+  return length > 7 ? Math.max(0.4, 7 / length).toFixed(2) : "1";
+}
+
+/** Everything inside <head> that every pass page shares. `css` is added after the shared stylesheet. */
+export function pageHead({ branding, fontsPath, title, letter, css = "" }) {
+  return `<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="${escapeHtml(branding.accent)}">
+<title>${escapeHtml(title)}</title>
+${faviconLink(branding, letter)}
+${fontPreloadLinks(fontsPath)}
+${branding.headHtml}
+<style>${loginStyles(branding, fontsPath)}${css}</style>`;
+}
+
+/** The top bar: the site's mark and name on the left, the address it is served from on the right. */
+export function topBar({ branding, name, letter, host, secure = true }) {
+  const mark = branding.logoHtml || `<span class="tqa-mark" aria-hidden="true">${letter ? escapeHtml(letter) : PLANE_ICON}</span>`;
+  return `<header class="tqa-top">
+      <div class="tqa-brand">${mark}${name ? `<span class="tqa-brand-name">${escapeHtml(name)}</span>` : ""}</div>
+      ${host ? `<p class="tqa-site${secure ? "" : " tqa-site-open"}" title="${secure ? "Secure connection to" : "Not a secure connection to"} ${escapeHtml(host)}"><span class="tqa-lock" role="img" aria-label="${secure ? "Secure connection" : "Not secure"}"></span><span class="tqa-host">${escapeHtml(host)}</span></p>` : ""}
+    </header>`;
 }
 
 /**
@@ -277,86 +481,107 @@ ${
  * @param {string} [params.qrLink]    What `qrSvg` encodes: `deepLink`, or
  *   https://<qrOrigin>/auth/q/<token> when `qrOrigin` is set.
  * @param {string} params.qrSvg       Inline SVG markup from qr.js.
- * @param {string} [params.error]     Message to show above the QR (e.g. "you were removed").
+ * @param {string} [params.error]     Message to show above the pass (e.g. "you were removed").
  * @param {string} params.pollPath    Absolute path the page should poll.
  * @param {number} params.pollIntervalMs
  * @param {object} [params.branding]
  * @param {string} [params.redirectTo="/"]  Where to send the browser once signed in.
+ * @param {string} [params.fontsPath]  Where the app serves the bundled fonts from (`auth.paths.fonts`).
+ *   Without it the page uses the system fonts.
  * @param {string} [params.origin]    The origin this page is being served from, when the request is
- *   known. Informational: nothing here uses it unless a replacement renderer does.
- * @param {{ name?: string, host?: string }} [params.site]  Which site this is, for pages that say so.
- *   `host` is shown under the heading, as a chip. `name` replaces the default heading and title
- *   ("Sign in to <name>"), but never one the app has set itself through `branding`, and its initials
- *   mark the card. Supplied by the hub's createSiteAuth; a standalone app can pass it from a
- *   custom renderer.
+ *   known. It supplies the address shown on the pass when `site.host` is not given.
+ * @param {{ name?: string, host?: string }} [params.site]  Which site this is. `name` is the pass's
+ *   name (and, by its first letter, the mark in the corner) and becomes the title "Sign in to
+ *   <name>"; `host` is the address shown top right and as the destination. Supplied by the hub's
+ *   createSiteAuth; `branding.siteName` overrides the name, and a standalone app gets its host from `origin`.
  */
 export function renderLoginPage(params) {
   const branding = { ...DEFAULT_BRANDING, ...(params.branding ?? {}) };
   const site = params.site ?? null;
-  if (site?.name && params.branding?.heading === undefined) branding.heading = `Sign in to ${site.name}`;
-  if (site?.name && params.branding?.title === undefined) branding.title = `Sign in to ${site.name}`;
+  const { host, name, letter, secure } = resolveSite({ branding, site, origin: params.origin });
+  if (name && params.branding?.title === undefined) branding.title = `Sign in to ${name}`;
   const { token, deepLink, qrSvg, error, pollPath, pollIntervalMs = 2000, redirectTo = "/" } = params;
   const appLink = escapeHtml(params.appLink ?? appLinkFromDeepLink(deepLink));
   const errorHtml = error ? `<p class="tqa-error" role="alert">${escapeHtml(error)}</p>` : "";
-
-  // The mark above the heading: the app's own logo if it gave one, else the initials of the site's name
-  // ("Internal docs" → "ID"), else Telegram's plane.
-  const initials = site?.name
-    ? String(site.name)
-        .trim()
-        .split(/\s+/)
-        .slice(0, 2)
-        .map((word) => word.match(/[\p{L}\p{N}]/u)?.[0] ?? "")
-        .join("")
-        .toUpperCase()
-    : "";
-  const markHtml = branding.logoHtml || `<span class="tqa-mark" aria-hidden="true">${initials ? escapeHtml(initials) : PLANE_ICON}</span>`;
-
-  // With no `background` of its own the page follows the visitor's light/dark setting.
-  const themed = params.branding?.background === undefined;
+  const text = (key) => escapeHtml(branding[key]);
+  const withName = (key) => escapeHtml(String(branding[key]).replace("{name}", name || host || ""));
+  const nameScale = nameScaleFor(name);
+  const step = (n) => escapeHtml(String(branding.stepText).replace("{n}", n));
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-tqa-state="waiting" data-tqa-view="app">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="color-scheme" content="${themed ? "light dark" : "light"}">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(branding.title)}</title>
-${faviconLink(branding)}
+${faviconLink(branding, letter)}
+${fontPreloadLinks(params.fontsPath)}
 ${branding.headHtml}
-<style>${loginStyles(branding, themed)}</style>
+<style>${loginStyles(branding, params.fontsPath)}</style>
 </head>
 <body>
-  <main class="tqa-card">
-    <header class="tqa-head">
-      ${markHtml}
-      <h1>${escapeHtml(branding.heading)}</h1>
-      ${site?.host ? `<p class="tqa-site">${escapeHtml(site.host)}</p>` : ""}
-      <p class="tqa-sub tqa-pointer-only">${escapeHtml(branding.subtitle)}</p>
-    </header>
-    ${errorHtml}
-    <a class="tqa-open tqa-touch-only" id="tqa-open" href="${appLink}">${PLANE_ICON}<span>${escapeHtml(branding.mobileLinkText)}</span></a>
-    <p class="tqa-how tqa-touch-only" id="tqa-how">${escapeHtml(branding.mobileSubtitle)}</p>
-    <p class="tqa-or tqa-touch-only" id="tqa-or">${escapeHtml(branding.orScanText)}</p>
-    <div class="tqa-qr" id="tqa-qr"><a class="tqa-qr-link" href="${appLink}" title="${escapeHtml(branding.qrLinkTitle)}" aria-label="${escapeHtml(branding.qrLinkTitle)}">${qrSvg}</a></div>
-    <p class="tqa-hint tqa-pointer-only" id="tqa-hint">${escapeHtml(branding.qrHintText)}</p>
-    <ol class="tqa-steps" aria-label="${escapeHtml(branding.stepsLabel)}">
-      <li>${escapeHtml(branding.stepOneText)}</li>
-      <li>${escapeHtml(branding.stepTwoText)}</li>
-      <li>${escapeHtml(branding.stepThreeText)}</li>
-    </ol>
-    <p class="tqa-status" id="tqa-status" role="status">${escapeHtml(branding.waitingText)}</p>
-    ${branding.footerHtml ? `<p class="tqa-foot">${branding.footerHtml}</p>` : ""}
-  </main>
+  <div class="tqa-page">
+    ${topBar({ branding, name, letter, host, secure })}
+    <main class="tqa-stage">
+      <h1 class="tqa-headline">
+        <span class="tqa-hl"><span class="tqa-v tqa-v-wait">${text("heading")}</span><span class="tqa-v tqa-v-ok">${text("approvedHeading")}</span><span class="tqa-v tqa-v-expired">${text("expiredHeading")}</span><span class="tqa-v tqa-v-denied">${text("deniedHeading")}</span></span>
+        <span class="tqa-hl"><span class="tqa-v tqa-v-wait"><span class="tqa-h-scan">${text("scanHeading")}</span><span class="tqa-h-tap">${text("tapHeading")}</span></span><span class="tqa-v tqa-v-ok">${text("approvedSubheading")}</span><span class="tqa-v tqa-v-expired">${text("expiredSubheading")}</span><span class="tqa-v tqa-v-denied">${text("deniedSubheading")}</span></span>
+      </h1>
+      ${errorHtml}
+      <div class="tqa-ticket">
+        <section class="tqa-main">
+          <div class="tqa-kicker"><span>${text("kickerText")}</span><span>${text("viaText")}</span></div>
+          <p class="tqa-name" style="--tqa-name-scale: ${nameScale}">${escapeHtml(name || branding.title)}</p>
+          <dl class="tqa-fields">
+            <div class="tqa-field tqa-f-dest"><dt>${text("destinationLabel")}</dt><dd>${escapeHtml(host || name)}</dd></div>
+            <div class="tqa-field"><dt>${text("phoneLabel")}</dt><dd>${text("phoneText")}</dd></div>
+            <div class="tqa-field"><dt>${text("codeLabel")}</dt><dd>${text("codeText")}</dd></div>
+            <div class="tqa-field"><dt>${text("statusLabel")}</dt><dd><span class="tqa-status" id="tqa-status" role="status"><span class="tqa-st-scan">${text("waitingText")}</span><span class="tqa-st-ready">${text("readyText")}</span></span></dd></div>
+            <div class="tqa-field"><dt>${text("stepLabel")}</dt><dd><span class="tqa-v tqa-v-wait tqa-v-expired tqa-v-denied">${step(1)}</span><span class="tqa-v tqa-v-ok">${step(3)}</span></dd></div>
+            <div class="tqa-field tqa-f-next"><dt>${text("nextLabel")}</dt><dd><span class="tqa-v tqa-v-wait">${text("nextText")}</span><span class="tqa-v tqa-v-ok">${withName("nextDoneText")}</span><span class="tqa-v tqa-v-expired">${text("nextExpiredText")}</span><span class="tqa-v tqa-v-denied">${text("nextDeniedText")}</span></dd></div>
+          </dl>
+        </section>
+        <aside class="tqa-stub">
+          <div class="tqa-qr" id="tqa-qr">
+            <a class="tqa-qr-link" href="${appLink}" title="${text("qrLinkTitle")}" aria-label="${text("qrLinkTitle")}">${qrSvg}</a>
+            <p class="tqa-cap"><span class="tqa-cap-main">${text("scanText")}</span><span class="tqa-cap-other">${text("scanOtherText")}</span></p>
+          </div>
+          <a class="tqa-here" id="tqa-here" href="${appLink}">${text("qrHintText")}</a>
+          <p class="tqa-or" id="tqa-or">${text("orScanText")}</p>
+          <div class="tqa-app" id="tqa-app">
+            <h2 class="tqa-app-title">${text("tabletTitleText")}</h2>
+            <a class="tqa-open" id="tqa-open" href="${appLink}"><span class="tqa-lbl-short">${text("mobileLinkText")}</span><span class="tqa-lbl-long">${text("tabletLinkText")}</span>${ARROW_ICON}</a>
+            <p class="tqa-how" id="tqa-how">${text("mobileSubtitle")}</p>
+          </div>
+          <button type="button" class="tqa-switch tqa-switch-qr" id="tqa-show-qr">${text("showQrText")}</button>
+          <button type="button" class="tqa-switch tqa-switch-app" id="tqa-show-app">${text("showAppText")}</button>
+          <p class="tqa-msg tqa-msg-expired" role="alert">${text("expiredText")}</p>
+          <p class="tqa-msg tqa-msg-denied" role="alert">${text("deniedText")}</p>
+          <div class="tqa-stamp"><span class="tqa-stamp-mark">${text("stampText")}</span><p class="tqa-stamp-note">${withName("nextDoneText")}</p></div>
+        </aside>
+      </div>
+    </main>
+    <footer class="tqa-foot"><span class="tqa-foot-desk">${text("footText")}</span><span class="tqa-foot-app">${text("mobileFootText")}</span><span class="tqa-foot-qr">${text("scanFootText")}</span>${branding.footerHtml ? `<p class="tqa-foot-extra">${branding.footerHtml}</p>` : ""}</footer>
+  </div>
 <script>
+(function () {
+  var root = document.documentElement;
+  function view(name) { return function () { root.setAttribute("data-tqa-view", name); }; }
+  var showQr = document.getElementById("tqa-show-qr");
+  var showApp = document.getElementById("tqa-show-app");
+  if (showQr) showQr.addEventListener("click", view("qr"));
+  if (showApp) showApp.addEventListener("click", view("app"));
+})();
 ${pollScript({
   token,
   pollPath,
   redirectTo,
   pollIntervalMs,
-  texts: { success: branding.successText, expired: branding.expiredText, denied: branding.deniedText, retry: branding.retryText },
-  ids: { status: "tqa-status", qr: "tqa-qr", hide: ["tqa-open", "tqa-how", "tqa-or", "tqa-hint"] },
+  texts: { success: branding.successText, expired: branding.statusExpiredText, denied: branding.statusDeniedText, retry: branding.retryText },
+  ids: { status: "tqa-status", qr: "tqa-qr", hide: ["tqa-here", "tqa-or", "tqa-app", "tqa-show-qr", "tqa-show-app"] },
 })}
 </script>
 </body>
@@ -367,33 +592,60 @@ ${pollScript({
  * What a phone shows when it opens /auth/q/<token> for a code that expired, was already used or
  * never existed. Takes the sign-in page's `branding`, and looks like the sign-in page it came from.
  */
-export function renderScanEndedPage({ branding: overrides } = {}) {
+export function renderScanEndedPage({ branding: overrides, fontsPath } = {}) {
   const branding = { ...DEFAULT_BRANDING, ...(overrides ?? {}) };
-  const themed = overrides?.background === undefined;
+  return renderEndedPage({ branding, fontsPath, title: branding.scanEndedHeading, text: branding.scanEndedText, pageTitle: branding.title });
+}
+
+/**
+ * A pass that says one thing and stops: the code-ended page and the OIDC error page. With a `site` (or
+ * an `origin` to take its address from) the top bar names the site; without, it shows only the app's logo.
+ *
+ * @param {object} params
+ * @param {object} params.branding   Already merged with DEFAULT_BRANDING.
+ * @param {string} [params.fontsPath]
+ * @param {string} params.title      The headline on the ticket.
+ * @param {string} params.text       What happened, in a sentence.
+ * @param {string} [params.pageTitle]  The tab title. Defaults to `title`.
+ * @param {string} [params.extraHtml]  Already-escaped markup after the text, inside the ticket.
+ * @param {{ name?: string, host?: string }} [params.site]
+ * @param {string} [params.origin]
+ */
+export function renderEndedPage({ branding, fontsPath, title, text, pageTitle, extraHtml = "", site, origin }) {
+  const { host, name, letter, secure } = site || origin ? resolveSite({ branding, site, origin }) : { host: "", name: "", letter: firstLetter(branding.siteName), secure: true };
+  const top = site || origin ? topBar({ branding, name, letter, host, secure }) : branding.logoHtml ? `<header class="tqa-top"><div class="tqa-brand">${branding.logoHtml}</div></header>` : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="robots" content="noindex, nofollow">
-<meta name="color-scheme" content="${themed ? "light dark" : "light"}">
-<title>${escapeHtml(branding.title)}</title>
-${faviconLink(branding)}
-${branding.headHtml}
-<style>${loginStyles(branding, themed)}
-  .tqa-card { text-align: center; }
-  .tqa-ended { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 16px; border-radius: 17px; color: var(--tqa-bad); background: color-mix(in srgb, var(--tqa-bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--tqa-bad) 28%, transparent); }
-  .tqa-ended::before { content: ""; width: 26px; height: 26px; background: currentColor; -webkit-mask: ${MASK_ALERT} center / contain no-repeat; mask: ${MASK_ALERT} center / contain no-repeat; }
-  .tqa-card h1 { margin: 0; font-size: 1.3rem; line-height: 1.25; letter-spacing: -0.025em; text-wrap: balance; }
-  .tqa-card p { margin: 12px 0 0; color: var(--tqa-muted); font-size: 0.92rem; text-wrap: balance; }
-</style>
+${pageHead({
+  branding,
+  fontsPath,
+  title: pageTitle ?? title,
+  letter,
+  css: `
+  .tqa-ticket.tqa-ticket-ended { grid-template-columns: minmax(0, 1fr); }
+  .tqa-ended-title { margin: 0.7rem 0 0; font: 900 clamp(2.2rem, 10vw, 3.4rem)/0.94 var(--tqa-display); letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance; }
+  .tqa-ended-text { max-width: 32rem; margin: 1rem 0 0; font-size: 1rem; color: var(--tqa-muted); text-wrap: pretty; }
+  .tqa-ended-code { margin: 1.25rem 0 0; padding-top: 1rem; border-top: 2px solid var(--tqa-ink); font: 500 0.8rem/1.4 var(--tqa-mono); letter-spacing: 0.04em; color: var(--tqa-muted); }
+  .tqa-ended-code code { font: inherit; color: var(--tqa-ink); }
+  .tqa-ended-note { max-width: 32rem; margin: 0.75rem 0 0; font-size: 0.9rem; color: var(--tqa-muted); text-wrap: pretty; }
+`,
+})}
 </head>
 <body>
-  <main class="tqa-card">
-    ${branding.logoHtml || `<span class="tqa-ended" aria-hidden="true"></span>`}
-    <h1>${escapeHtml(branding.scanEndedHeading)}</h1>
-    <p>${escapeHtml(branding.scanEndedText)}</p>
-  </main>
+  <div class="tqa-page">
+    ${top}
+    <main class="tqa-stage">
+      <div class="tqa-ticket tqa-ticket-ended">
+        <section class="tqa-main">
+          <div class="tqa-kicker"><span>${escapeHtml(branding.kickerText)}</span><span>${escapeHtml(branding.viaText)}</span></div>
+          <h1 class="tqa-ended-title">${escapeHtml(title)}</h1>
+          <p class="tqa-ended-text">${escapeHtml(text)}</p>
+          ${extraHtml}
+        </section>
+      </div>
+    </main>
+  </div>
 </body>
 </html>`;
 }

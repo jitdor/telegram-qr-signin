@@ -63,11 +63,17 @@ export function qrSvg(text, options = {}) {
     }
   }
 
+  // The centre of each of the three finder squares, drawn again on top as its own element so a page
+  // can colour them from CSS (`.qr-eye { fill: ... }`) without touching the rest of the code.
+  const eyeAt = (row, col) =>
+    `<rect class="qr-eye" x="${(col + 2 + margin) * cellSize}" y="${(row + 2 + margin) * cellSize}" width="${cellSize * 3}" height="${cellSize * 3}" fill="${escapeXmlAttr(dark)}"/>`;
+  const eyes = eyeAt(0, 0) + eyeAt(0, count - 7) + eyeAt(count - 7, 0);
+
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" ` +
     `shape-rendering="crispEdges" role="img" aria-label="${escapeXmlAttr(label)}">` +
     `<rect width="${size}" height="${size}" fill="${escapeXmlAttr(light)}"/>` +
-    `<path d="${path}" fill="${escapeXmlAttr(dark)}"/></svg>`
+    `<path d="${path}" fill="${escapeXmlAttr(dark)}"/>${eyes}</svg>`
   );
 }
 

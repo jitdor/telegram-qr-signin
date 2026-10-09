@@ -103,7 +103,7 @@ export const DEFAULT_BRANDING = {
   // results. "{name}" is the site's name. `previewImage` replaces the built-in card with an image of your own:
   // an absolute https URL, or a path on this site.
   description:
-    "{name} authentication: sign in securely with Telegram. Scan the code and approve in the app. No password, no phone number, nothing to type.",
+    "{name} authentication: sign in by scanning a QR code with Telegram. Tap Approve and you're in. No password, no phone number, nothing to type.",
   previewImage: "",
   logoHtml: "",
   footerHtml: "",
@@ -521,7 +521,7 @@ export function previewTags({ branding, name, host, origin, previewPath }) {
     image && !own && meta("property", "og:image:type", "image/png"),
     image && !own && meta("property", "og:image:width", PREVIEW_WIDTH),
     image && !own && meta("property", "og:image:height", PREVIEW_HEIGHT),
-    image && meta("property", "og:image:alt", `${title}: scan the code with Telegram`),
+    image && meta("property", "og:image:alt", "Sign in with a QR code: scan it with Telegram"),
     meta("name", "twitter:card", image ? "summary_large_image" : "summary"),
     meta("name", "twitter:title", title),
     description && meta("name", "twitter:description", description),

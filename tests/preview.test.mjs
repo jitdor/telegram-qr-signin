@@ -22,7 +22,7 @@ test("the sign-in page carries the tags link previews are built from", async () 
   const html = await auth.loginPage({ request: get("/auth/login") });
   assert.equal(meta(html, "og:title"), "Sign in to App");
   assert.equal(meta(html, "og:type"), "website");
-  assert.match(meta(html, "og:description"), /^App authentication: sign in securely with Telegram\./);
+  assert.match(meta(html, "og:description"), /^App authentication: sign in by scanning a QR code with Telegram\./);
   assert.equal(meta(html, "description"), meta(html, "og:description"));
   assert.equal(meta(html, "og:site_name"), "App");
   assert.equal(meta(html, "og:image"), `https://app.example${auth.paths.preview}`);

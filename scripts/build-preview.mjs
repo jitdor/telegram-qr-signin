@@ -11,9 +11,12 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_BRANDING } from "../src/login-page.js";
 import { fontFaceCss } from "../src/fonts/index.js";
 import { FONT_DATA } from "../src/fonts/data.js";
+import { qrSvg } from "../src/qr.js";
 
 const PLANE = "M21.4 3.6 2.9 10.8c-1 .4-1 1.8.1 2.1l4.6 1.5 1.8 5.6c.3.9 1.4 1.1 2 .4l2.6-2.7 4.8 3.5c.8.6 1.9.1 2.1-.9l3-15.1c.2-1.1-.8-2-1.9-1.6Zm-3.6 4.1-8.5 7.6-.4 3.4-1.2-4 9.6-6.9c.4-.3.9.2.5.6Z";
 const accent = DEFAULT_BRANDING.accent;
+// A real, scannable code (it only opens telegram.org): the card's main point is that you sign in by scanning one.
+const qr = qrSvg("https://telegram.org", { dark: "#17130f", light: "#fbfaf6", margin: 0, cellSize: 8, errorCorrection: "M" });
 
 // The fonts are inlined as data: URIs: the card is drawn offline.
 const faces = fontFaceCss("/f").replace(/url\("\/f\/([^"]+?)-[0-9a-f]{8}\.woff2"\)/g, (_, file) => `url("data:font/woff2;base64,${FONT_DATA[file]}")`);
@@ -27,24 +30,19 @@ body { width: 1200px; height: 630px; overflow: hidden; background-color: ${accen
 .mark { position: absolute; left: 72px; top: 64px; display: flex; align-items: center; gap: 18px; font-weight: 700; font-size: 30px; }
 .mark i { width: 64px; height: 64px; border-radius: 16px; background: #17130f; display: grid; place-items: center; }
 .mark svg { width: 34px; height: 34px; fill: ${accent}; }
-h1 { position: absolute; left: 72px; top: 150px; font: 900 128px/.94 "TQA Display", sans-serif; letter-spacing: -.01em; text-transform: uppercase; }
-.ticket { position: absolute; left: 72px; right: 72px; bottom: 56px; height: 128px; white-space: nowrap; background: #fbfaf6; border-radius: 22px;
-  box-shadow: 0 0 0 3px #17130f, 0 24px 40px -18px rgba(0,0,0,.45); display: flex; align-items: center; padding: 0 44px; gap: 52px; }
-.ticket .f { font: 500 20px/1 "TQA Mono", monospace; letter-spacing: .14em; text-transform: uppercase; color: #6a6358; }
-.ticket b { display: block; margin-top: 12px; font: 600 32px/1 "TQA Sans", sans-serif; letter-spacing: 0; text-transform: none; color: #17130f; }
-.ticket .sp { flex: 1; }
-.ticket .go { display: flex; align-items: center; gap: 14px; background: #17130f; color: #fff; border-radius: 999px; padding: 18px 30px; font: 700 28px/1 "TQA Sans", sans-serif; }
-.ticket .go svg { width: 30px; height: 30px; fill: ${accent}; }
+h1 { position: absolute; left: 72px; top: 168px; font: 900 124px/.94 "TQA Display", sans-serif; letter-spacing: -.01em; text-transform: uppercase; }
+.sub { position: absolute; left: 72px; top: 438px; font: 600 40px/1.25 "TQA Sans", sans-serif; }
+.perks { position: absolute; left: 72px; bottom: 56px; font: 500 21px/1 "TQA Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
+.qr { position: absolute; right: 72px; top: 64px; width: 330px; height: 330px; padding: 34px; background: #fbfaf6; border-radius: 26px;
+  box-shadow: 0 0 0 3px #17130f, 0 24px 40px -18px rgba(0,0,0,.45); }
+.qr svg { display: block; width: 100%; height: 100%; }
+.qr .qr-eye { fill: ${accent}; }
 </style>
 <div class="mark"><i><svg viewBox="0 0 24 24"><path d="${PLANE}"/></svg></i>Authentication platform</div>
-<h1>Sign in with<br>Telegram.</h1>
-<div class="ticket">
-  <div class="f">Password<b>None</b></div>
-  <div class="f">Phone number<b>Not needed</b></div>
-  <div class="f">Code to type<b>None</b></div>
-  <div class="sp"></div>
-  <div class="go"><svg viewBox="0 0 24 24"><path d="${PLANE}"/></svg>Secure sign-in</div>
-</div>`;
+<h1>Sign in with<br>a QR code.</h1>
+<p class="sub">Scan it with Telegram. Tap Approve. You're in.</p>
+<p class="perks">No password &nbsp;·&nbsp; No phone number &nbsp;·&nbsp; No code to type</p>
+<div class="qr">${qr}</div>`;
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });

@@ -204,7 +204,7 @@ function loginStyles(branding, fontsPath) {
     color: var(--tqa-on); font: 16px/1.5 var(--tqa-font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
   }
   .tqa-page {
-    display: flex; flex-direction: column; width: min(100%, 47rem); min-height: 100vh; min-height: 100dvh; margin: 0 auto;
+    display: flex; flex-direction: column; width: min(100%, 50rem); min-height: 100vh; min-height: 100dvh; margin: 0 auto;
     padding: max(20px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
   }
   .tqa-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
@@ -247,7 +247,7 @@ function loginStyles(branding, fontsPath) {
   .tqa-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; margin: 18px 0 0; }
   .tqa-field { min-width: 0; }
   .tqa-field dt { font: 500 0.7rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
-  .tqa-field dd { margin: 4px 0 0; font-weight: 600; font-size: 1.12rem; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .tqa-field dd { margin: 4px 0 0; font-weight: 600; font-size: 1.12rem; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; text-wrap: balance; }
   .tqa-f-dest { grid-column: 1 / -1; }
   .tqa-f-next { display: none; }
   .tqa-status { display: inline-flex; align-items: center; gap: 0.5em; }
@@ -281,7 +281,7 @@ function loginStyles(branding, fontsPath) {
   .tqa-qr svg > rect:first-child { fill: var(--tqa-paper); }
   .tqa-qr svg > path { fill: var(--tqa-ink); }
   .tqa-qr svg .qr-eye { fill: color-mix(in srgb, var(--tqa-accent) 88%, #000); }
-  .tqa-cap { margin: 0; font: 500 0.76rem/1.4 var(--tqa-mono); letter-spacing: 0.22em; text-transform: uppercase; text-align: center; }
+  .tqa-cap { margin: 0; font: 500 0.74rem/1.4 var(--tqa-mono); letter-spacing: 0.15em; text-transform: uppercase; text-align: center; text-wrap: balance; }
   .tqa-cap-other { display: none; }
   .tqa-here, .tqa-switch {
     appearance: none; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; color: var(--tqa-ink);
@@ -326,12 +326,13 @@ function loginStyles(branding, fontsPath) {
   /* Wide enough for the stub to sit beside the ticket. */
   @media (min-width: 640px) {
     .tqa-main { padding: 30px 36px 28px; }
-    .tqa-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    /* The first column carries the address and the status, which are the longest values. */
+    .tqa-fields { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) minmax(0, 1.1fr); column-gap: 14px; }
     .tqa-f-dest { grid-column: auto; }
     .tqa-f-next { display: block; }
   }
   @media (min-width: 900px) {
-    .tqa-ticket { grid-template-columns: minmax(0, 1fr) 16rem; }
+    .tqa-ticket { grid-template-columns: minmax(0, 1fr) 15rem; }
     .tqa-stub { justify-content: center; padding: 28px 22px; border-top: 0; border-left: 1.5px dashed var(--tqa-rule); }
     .tqa-stub::before { top: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
     .tqa-stub::after { top: auto; right: auto; bottom: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }

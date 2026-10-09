@@ -307,17 +307,12 @@ function loginStyles(branding, fontsPath) {
   .tqa-qr-link { --tqa-qr-size: 12.5rem; display: block; width: min(100%, var(--tqa-qr-size)); line-height: 0; transition: transform 0.2s ease; }
   /* The code is drawn with crisp edges, so at a size that isn't a whole number of device pixels per module
      the modules come out unevenly, some a pixel wider than others. With the module count from the SVG
-     (--tqa-qr-modules, set on the link), the size goes to the nearest whole number of device pixels
-     (--tqa-qr-px) per module. Rounding up can take it up to half a module's width into the stub's padding. */
+     (--tqa-qr-modules, set on the link), the size goes to the nearest whole number of device pixels per
+     module. A device pixel is 1px / --tqa-dpr, the pixel ratio, which the script below keeps current: it
+     changes with browser zoom and with the screen the window is on. Rounding up can take the code up to
+     half a module's width into the stub's padding. */
   @supports (width: round(1px, 1px)) {
-    .tqa-qr-link {
-      --tqa-qr-px: 1px;
-      width: round(min(100%, var(--tqa-qr-size)), var(--tqa-qr-modules, 1) * var(--tqa-qr-px));
-    }
-    @media (resolution: 1.25dppx) { .tqa-qr-link { --tqa-qr-px: 0.8px; } }
-    @media (resolution: 1.5dppx) { .tqa-qr-link { --tqa-qr-px: calc(2px / 3); } }
-    @media (min-resolution: 2dppx) { .tqa-qr-link { --tqa-qr-px: 0.5px; } }
-    @media (min-resolution: 3dppx) { .tqa-qr-link { --tqa-qr-px: calc(1px / 3); } }
+    .tqa-qr-link { width: round(min(100%, var(--tqa-qr-size)), var(--tqa-qr-modules, 1) * 1px / var(--tqa-dpr, 1)); }
   }
   .tqa-qr-link:hover { transform: translateY(-2px); }
   .tqa-qr svg { display: block; width: 100%; height: auto; }
@@ -618,6 +613,15 @@ ${branding.headHtml}
   var showApp = document.getElementById("tqa-show-app");
   if (showQr) showQr.addEventListener("click", view("qr"));
   if (showApp) showApp.addEventListener("click", view("app"));
+  // The pixel ratio, for sizing the QR on whole device pixels (see .tqa-qr-link). It changes with zoom and
+  // when the window moves to another screen; a media query for the current ratio says when.
+  function trackPixelRatio() {
+    var dpr = window.devicePixelRatio || 1;
+    root.style.setProperty("--tqa-dpr", String(dpr));
+    var change = window.matchMedia && window.matchMedia("(resolution: " + dpr + "dppx)");
+    if (change && change.addEventListener) change.addEventListener("change", trackPixelRatio, { once: true });
+  }
+  trackPixelRatio();
 })();
 ${pollScript({
   token,

@@ -461,7 +461,7 @@ createHub({
 
 | Member | Purpose |
 | --- | --- |
-| `fetch(request)` | A complete Worker handler: the hub's routes, `404` for the rest |
+| `fetch(request)` | A complete Worker handler: the hub's routes, `404` for the rest. `GET /` is a small landing page carrying the link-preview card, so the bare address unfurls in Telegram and Slack; pass `landing: false` if something else owns `/` |
 | `handle(request)` | The same, but `null` for paths it does not own, so it composes with your routing |
 | `webhook(request)` | Just the Telegram webhook endpoint |
 | `handleUpdate(update)` | One update from a bot framework you already run; resolves `true` for a sign-in |

@@ -184,6 +184,12 @@ export interface HubConfig {
   webhookSecret?: string;
   webhookPath?: string;
   adminPath?: string;
+  /**
+   * Answer GET / with a small page that says what this is and links to the console, carrying the link-preview
+   * card, so the hub's bare address unfurls in Telegram, Slack and the like. Default true; false when something
+   * else owns `/`.
+   */
+  landing?: boolean;
   /** Where sites call the hub. Default "/hub-api"; a site's `hub.url` is this path on the hub's address. */
   apiPath?: string;
   /**

@@ -891,8 +891,11 @@ ${
   // --- Rendering -------------------------------------------------------------------------------
 
   function page(title, body, ctx, status = 200, active = "overview") {
-    const html = renderShell({ title, body, adminPath, session: ctx.session, sites: ctx.sites ?? [], active });
-    return new Response(ctx.request.method === "HEAD" ? null : html, { status, headers: SECURITY_HEADERS });
+    // One inline script shows times in the viewer's timezone; only it, by nonce, may run.
+    const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+    const html = renderShell({ title, body, adminPath, session: ctx.session, sites: ctx.sites ?? [], active, nonce });
+    const headers = { ...SECURITY_HEADERS, "Content-Security-Policy": SECURITY_HEADERS["Content-Security-Policy"].replace("default-src 'none';", `default-src 'none'; script-src 'nonce-${nonce}';`) };
+    return new Response(ctx.request.method === "HEAD" ? null : html, { status, headers });
   }
 
   /** Renders a POST form carrying the CSRF token. `inline` forms sit inside a table cell. */

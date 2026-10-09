@@ -107,7 +107,7 @@ test("the stylesheet respects reduced motion and the system's dark setting, and 
   assert.doesNotMatch(STYLES, /@import|url\(\s*["']?https?:|@font-face/i);
 });
 
-test("every console page is self-contained: no scripts, no external requests, and the only image is its own icon", async () => {
+test("every console page is self-contained: one local-time script, no external requests, and the only image is its own icon", async () => {
   const ctx = makeHub();
   const cookie = await signInToConsole(ctx.hub, ROOT);
   await post(ctx.hub, "/admin/ns", { namespace: "docs", name: "Docs", url: "https://docs.example" }, { cookie });
@@ -119,14 +119,14 @@ test("every console page is self-contained: no scripts, no external requests, an
   ];
   for (const response of pages) {
     const html = await response.text();
-    assert.doesNotMatch(html, /<script/i);
+    assert.equal(html.match(/<script/gi).length, 1);
     assert.doesNotMatch(html, /\s(?:src|href|action|poster|srcset)=["']https?:/i, "nothing points off this origin");
     assert.doesNotMatch(html, /url\(\s*["']?https?:|@import/i);
     assert.doesNotMatch(html.replace(/<link rel="icon" href="data:[^"]*">/, ""), /data:/, "the tab icon is the one data: URI");
     assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
     const csp = response.headers.get("Content-Security-Policy");
     assert.match(csp, /img-src data:;/);
-    assert.doesNotMatch(csp, /script-src|unsafe-eval|https?:/);
+    assert.doesNotMatch(csp, /unsafe-eval|https?:/);
   }
 });
 

@@ -103,7 +103,7 @@ export const DEFAULT_BRANDING = {
   // results. "{name}" is the site's name. `previewImage` replaces the built-in card with an image of your own:
   // an absolute https URL, or a path on this site.
   description:
-    "Sign in to {name} with Telegram. Scan the code, tap Start, and you're in. No phone number, no password, nothing to type.",
+    "{name} authentication: sign in securely with Telegram. Scan the code and approve in the app. No password, no phone number, nothing to type.",
   previewImage: "",
   logoHtml: "",
   footerHtml: "",

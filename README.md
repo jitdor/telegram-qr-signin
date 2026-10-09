@@ -484,7 +484,7 @@ the poll to work anyway. A custom `renderLoginPage` is given `fontsPath` and can
 for visitors who ask for less of it.
 
 **Link previews.** Paste the sign-in address into Telegram, Slack, Discord, X or iMessage and it unfurls
-into a card: the page's title, a short description and a 1200×630 image in the same orange-pass look
+into a card: the page's title, a short description and a 1200×630 image in the page's orange look
 (`og:` and `twitter:` tags, plus `<meta name="description">`). `auth.handle()` serves the image at
 `<basePath>/preview-<hash>.png` (`auth.paths.preview`), cached for a year, so nothing more is needed while
 `/auth/*` reaches `auth.handle()`. The image URL must be absolute, so it is built from the address the page

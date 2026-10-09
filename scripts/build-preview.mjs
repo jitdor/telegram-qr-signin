@@ -29,20 +29,21 @@ body { width: 1200px; height: 630px; overflow: hidden; background-color: ${accen
 .mark svg { width: 34px; height: 34px; fill: ${accent}; }
 h1 { position: absolute; left: 72px; top: 150px; font: 900 128px/.94 "TQA Display", sans-serif; letter-spacing: -.01em; text-transform: uppercase; }
 .ticket { position: absolute; left: 72px; right: 72px; bottom: 56px; height: 128px; white-space: nowrap; background: #fbfaf6; border-radius: 22px;
-  box-shadow: 0 0 0 3px #17130f, 0 24px 40px -18px rgba(0,0,0,.45); display: flex; align-items: center; padding: 0 44px; gap: 64px; }
+  box-shadow: 0 0 0 3px #17130f, 0 24px 40px -18px rgba(0,0,0,.45); display: flex; align-items: center; padding: 0 44px; gap: 52px; }
 .ticket .f { font: 500 20px/1 "TQA Mono", monospace; letter-spacing: .14em; text-transform: uppercase; color: #6a6358; }
 .ticket b { display: block; margin-top: 12px; font: 600 32px/1 "TQA Sans", sans-serif; letter-spacing: 0; text-transform: none; color: #17130f; }
 .ticket .sp { flex: 1; }
 .ticket .go { display: flex; align-items: center; gap: 14px; background: #17130f; color: #fff; border-radius: 999px; padding: 18px 30px; font: 700 28px/1 "TQA Sans", sans-serif; }
 .ticket .go svg { width: 30px; height: 30px; fill: ${accent}; }
 </style>
-<div class="mark"><i><svg viewBox="0 0 24 24"><path d="${PLANE}"/></svg></i>Sign-in pass</div>
+<div class="mark"><i><svg viewBox="0 0 24 24"><path d="${PLANE}"/></svg></i>Authentication platform</div>
 <h1>Sign in with<br>Telegram.</h1>
 <div class="ticket">
+  <div class="f">Password<b>None</b></div>
   <div class="f">Phone number<b>Not needed</b></div>
   <div class="f">Code to type<b>None</b></div>
   <div class="sp"></div>
-  <div class="go"><svg viewBox="0 0 24 24"><path d="${PLANE}"/></svg>Scan to sign in</div>
+  <div class="go"><svg viewBox="0 0 24 24"><path d="${PLANE}"/></svg>Secure sign-in</div>
 </div>`;
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });

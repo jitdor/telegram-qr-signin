@@ -482,7 +482,7 @@ test("given a fontsPath the page uses the bundled fonts from that same origin, a
   for (const html of [renderLoginPage({ ...BASE, fontsPath: "/auth/fonts" }), renderScanEndedPage({ fontsPath: "/auth/fonts" })]) {
     const urls = [...html.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]).filter((u) => !u.startsWith("data:"));
     assert.equal(urls.length, 3, "one file per face");
-    for (const url of urls) assert.match(url, /^\/auth\/fonts\/(archivo-display|inter|jetbrains-mono)-[0-9a-f]{8}\.woff2$/);
+    for (const url of urls) assert.match(url, /^\/auth\/fonts\/(archivo-display|inter|google-sans-code)-[0-9a-f]{8}\.woff2$/);
     assert.equal(html.match(/<link rel="preload" href="\/auth\/fonts\/[^"]+" as="font" type="font\/woff2" crossorigin>/g).length, 3);
     for (const family of ["TQA Display", "TQA Sans", "TQA Mono"]) assert.match(html, new RegExp(`font-family: "${family}"`));
     assert.match(html, /font-display: swap/);

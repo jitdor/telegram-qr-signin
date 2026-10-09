@@ -198,10 +198,10 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
-## JetBrains Mono (variable weight)
+## Google Sans Code (variable weight)
 
 ```text
-Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono) JetBrainsMono-Italic[wght].ttf: Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+Copyright 2025 The Google Sans Code Project Authors (github.com/googlefonts/googlesans-code) GoogleSansCode-Italic[MONO,wght].ttf: Copyright 2025 The Google Sans Code Project Authors (github.com/googlefonts/googlesans-code)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

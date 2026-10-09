@@ -76,6 +76,21 @@ export const DEFAULT_BRANDING = {
   footText: "Keep this tab open. It signs you in by itself once you approve in Telegram.",
   mobileFootText: "This page finishes signing you in when you come back.",
   scanFootText: "Keep this screen on until the other phone approves.",
+  // The OIDC provider's consent screen and its error page (see oidc/consent-page.js).
+  consentHeading: "One last check.",
+  consentSubheading: "Let it sign you in?",
+  consentKickerText: "Access request",
+  consentWarnText: "This app is not operated by us. Authorize it only if you started this sign-in yourself.",
+  signedInAsLabel: "Signed in as",
+  returnsLabel: "Returns to",
+  accessLabel: "It will receive",
+  allowText: "Authorize",
+  denyText: "Cancel",
+  consentFootText: "You can withdraw this at any time. Withdrawing also signs the app out.",
+  errorHeading: "Sign-in could not continue",
+  errorCodeLabel: "Error code",
+  errorNoteText:
+    "Nothing was shared with the application that sent you here. If you arrived from a link you did not expect, close this page.",
   // The page ending a scan that came too late (see renderScanEndedPage).
   scanEndedHeading: "This sign-in code has ended",
   scanEndedText: "It expired or was already used. Go back to the sign-in page on your computer for a new code.",
@@ -177,7 +192,7 @@ function loginStyles(branding, fontsPath) {
        that wants its own can set --tqa-display, --tqa-font and --tqa-mono from branding.headHtml. */
     --tqa-display: "TQA Display", "Archivo Black", Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", system-ui, sans-serif;
     --tqa-font: "TQA Sans", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --tqa-mono: "TQA Mono", ui-monospace, "SF Mono", "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --tqa-mono: "TQA Mono", "Google Sans Code", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   }
   *, *::before, *::after { box-sizing: border-box; }
   html, body { min-height: 100%; }
@@ -387,8 +402,39 @@ function loginStyles(branding, fontsPath) {
 `;
 }
 
+/**
+ * What the pass calls the site: its name (`branding.siteName`, else the hub's `site.name`, else the first
+ * label of the host), the address it is served from (`site.host`, else the host of `origin`), and the
+ * letter that marks it. Shared by every page that wears the pass.
+ */
+export function resolveSite({ branding, site, origin }) {
+  const host = site?.host || hostOf(origin);
+  const name = String(branding.siteName || site?.name || nameFromHost(host) || "").trim();
+  return { host, name, letter: firstLetter(name) };
+}
+
+/** The CSS scale that keeps a long name inside the ticket: 1 up to seven characters, smaller after. */
+export function nameScaleFor(name) {
+  const length = [...name].length;
+  return length > 7 ? Math.max(0.4, 7 / length).toFixed(2) : "1";
+}
+
+/** Everything inside <head> that every pass page shares. `css` is added after the shared stylesheet. */
+export function pageHead({ branding, fontsPath, title, letter, css = "" }) {
+  return `<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="${escapeHtml(branding.accent)}">
+<title>${escapeHtml(title)}</title>
+${faviconLink(branding, letter)}
+${fontPreloadLinks(fontsPath)}
+${branding.headHtml}
+<style>${loginStyles(branding, fontsPath)}${css}</style>`;
+}
+
 /** The top bar: the site's mark and name on the left, the address it is served from on the right. */
-function topBar({ branding, name, letter, host }) {
+export function topBar({ branding, name, letter, host }) {
   const mark = branding.logoHtml || `<span class="tqa-mark" aria-hidden="true">${letter ? escapeHtml(letter) : PLANE_ICON}</span>`;
   return `<header class="tqa-top">
       <div class="tqa-brand">${mark}${name ? `<span class="tqa-brand-name">${escapeHtml(name)}</span>` : ""}</div>
@@ -422,17 +468,14 @@ function topBar({ branding, name, letter, host }) {
 export function renderLoginPage(params) {
   const branding = { ...DEFAULT_BRANDING, ...(params.branding ?? {}) };
   const site = params.site ?? null;
-  const host = site?.host || hostOf(params.origin);
-  const name = String(branding.siteName || site?.name || nameFromHost(host) || "").trim();
+  const { host, name, letter } = resolveSite({ branding, site, origin: params.origin });
   if (name && params.branding?.title === undefined) branding.title = `Sign in to ${name}`;
-  const letter = firstLetter(name);
   const { token, deepLink, qrSvg, error, pollPath, pollIntervalMs = 2000, redirectTo = "/" } = params;
   const appLink = escapeHtml(params.appLink ?? appLinkFromDeepLink(deepLink));
   const errorHtml = error ? `<p class="tqa-error" role="alert">${escapeHtml(error)}</p>` : "";
   const text = (key) => escapeHtml(branding[key]);
   const withName = (key) => escapeHtml(String(branding[key]).replace("{name}", name || host || ""));
-  const nameLength = [...name].length;
-  const nameScale = nameLength > 7 ? Math.max(0.4, 7 / nameLength).toFixed(2) : "1";
+  const nameScale = nameScaleFor(name);
   const step = (n) => escapeHtml(String(branding.stepText).replace("{n}", n));
 
   return `<!DOCTYPE html>
@@ -521,34 +564,54 @@ ${pollScript({
  */
 export function renderScanEndedPage({ branding: overrides, fontsPath } = {}) {
   const branding = { ...DEFAULT_BRANDING, ...(overrides ?? {}) };
-  const letter = firstLetter(branding.siteName);
+  return renderEndedPage({ branding, fontsPath, title: branding.scanEndedHeading, text: branding.scanEndedText, pageTitle: branding.title });
+}
+
+/**
+ * A pass that says one thing and stops: the code-ended page and the OIDC error page. With a `site` (or
+ * an `origin` to take its address from) the top bar names the site; without, it shows only the app's logo.
+ *
+ * @param {object} params
+ * @param {object} params.branding   Already merged with DEFAULT_BRANDING.
+ * @param {string} [params.fontsPath]
+ * @param {string} params.title      The headline on the ticket.
+ * @param {string} params.text       What happened, in a sentence.
+ * @param {string} [params.pageTitle]  The tab title. Defaults to `title`.
+ * @param {string} [params.extraHtml]  Already-escaped markup after the text, inside the ticket.
+ * @param {{ name?: string, host?: string }} [params.site]
+ * @param {string} [params.origin]
+ */
+export function renderEndedPage({ branding, fontsPath, title, text, pageTitle, extraHtml = "", site, origin }) {
+  const { host, name, letter } = site || origin ? resolveSite({ branding, site, origin }) : { host: "", name: "", letter: firstLetter(branding.siteName) };
+  const top = site || origin ? topBar({ branding, name, letter, host }) : branding.logoHtml ? `<header class="tqa-top"><div class="tqa-brand">${branding.logoHtml}</div></header>` : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="robots" content="noindex, nofollow">
-<meta name="color-scheme" content="light">
-<meta name="theme-color" content="${escapeHtml(branding.accent)}">
-<title>${escapeHtml(branding.title)}</title>
-${faviconLink(branding, letter)}
-${fontPreloadLinks(fontsPath)}
-${branding.headHtml}
-<style>${loginStyles(branding, fontsPath)}
+${pageHead({
+  branding,
+  fontsPath,
+  title: pageTitle ?? title,
+  letter,
+  css: `
   .tqa-ticket.tqa-ticket-ended { grid-template-columns: minmax(0, 1fr); }
   .tqa-ended-title { margin: 0.7rem 0 0; font: 900 clamp(2.2rem, 10vw, 3.4rem)/0.94 var(--tqa-display); letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance; }
   .tqa-ended-text { max-width: 32rem; margin: 1rem 0 0; font-size: 1rem; color: var(--tqa-muted); text-wrap: pretty; }
-</style>
+  .tqa-ended-code { margin: 1.25rem 0 0; padding-top: 1rem; border-top: 2px solid var(--tqa-ink); font: 500 0.8rem/1.4 var(--tqa-mono); letter-spacing: 0.04em; color: var(--tqa-muted); }
+  .tqa-ended-code code { font: inherit; color: var(--tqa-ink); }
+  .tqa-ended-note { max-width: 32rem; margin: 0.75rem 0 0; font-size: 0.9rem; color: var(--tqa-muted); text-wrap: pretty; }
+`,
+})}
 </head>
 <body>
   <div class="tqa-page">
-    ${branding.logoHtml ? `<header class="tqa-top"><div class="tqa-brand">${branding.logoHtml}</div></header>` : ""}
+    ${top}
     <main class="tqa-stage">
       <div class="tqa-ticket tqa-ticket-ended">
         <section class="tqa-main">
           <div class="tqa-kicker"><span>${escapeHtml(branding.kickerText)}</span><span>${escapeHtml(branding.viaText)}</span></div>
-          <h1 class="tqa-ended-title">${escapeHtml(branding.scanEndedHeading)}</h1>
-          <p class="tqa-ended-text">${escapeHtml(branding.scanEndedText)}</p>
+          <h1 class="tqa-ended-title">${escapeHtml(title)}</h1>
+          <p class="tqa-ended-text">${escapeHtml(text)}</p>
+          ${extraHtml}
         </section>
       </div>
     </main>

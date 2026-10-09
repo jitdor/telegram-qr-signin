@@ -446,7 +446,7 @@ side by side when held sideways and stacked when upright. The pass carries the s
 letters, its first letter as the mark in the corner and the address it is served from top right and as
 the destination, and spells out that no phone number or code is needed. Its status follows the
 sign-in (Awaiting scan, then Signed in with an ADMITTED stamp; Expired and Not allowed have their own
-endings. Its type is Archivo (headline and name), Inter and JetBrains Mono, all SIL OFL, bundled in
+endings. Its type is Archivo (headline and name), Inter and Google Sans Code (the small labels, hints and footnotes), all SIL OFL, bundled in
 `src/fonts` and served by your own app (see below). It makes no request to anyone else: no font
 service, no images, no scripts from anywhere else, and its tab icon is inline.
 
@@ -475,7 +475,7 @@ Every other word on the page can be replaced too (`kickerText`, `destinationLabe
 
 **Fonts.** `auth.handle()` serves the three fonts at `<basePath>/fonts/<name>-<hash>.woff2` (so
 `auth.paths.fonts` is `/auth/fonts` by default), cached for a year, and the page preloads them. They
-are subset to Basic Latin, Latin-1 and common punctuation (about 63 KB in all); other scripts use the
+are subset to Basic Latin, Latin-1 and common punctuation (about 73 KB in all); other scripts use the
 system font. Nothing else is needed as long as `/auth/*` reaches `auth.handle()`, which it must for
 the poll to work anyway. A custom `renderLoginPage` is given `fontsPath` and can use
 `fontFaceCss(fontsPath)` from `telegram-qr-signin/fonts`. To use your own fonts instead, put an
@@ -595,6 +595,18 @@ apps.
 the QR scan as its authentication method. ES256 signing, published JWKS, per-client audiences,
 PKCE, consent, and refresh rotation with reuse detection. Relying parties integrate with a stock
 OIDC library and never learn Telegram is involved.
+
+The sign-in page, the consent screen and the error page are one design: the same pass, fonts and
+colours, restyled by the same `branding` you give `createOidcProvider`. The consent screen puts the
+requesting app's name on the ticket in big letters, lists what it will receive, shows the host it
+returns to, and keeps the warning that the app is not operated by you. Its words are
+`consentHeading`, `consentSubheading`, `consentWarnText`, `allowText`, `denyText` and the rest listed
+in `DEFAULT_BRANDING`. The top bar shows the provider's own name (`branding.siteName`, else the first
+label of the issuer's host) and address, so the app asking is never mistaken for the provider.
+
+<p align="center">
+  <img src="docs/img/consent-desktop.png" alt="The OIDC consent screen: a pass naming the requesting app, the host it returns to, what it will receive, and Authorize and Cancel buttons on the stub" width="480">
+</p>
 
 ```js
 import { createOidcProvider, loadSigningKeys, StaticClientRegistry, D1OidcStore } from "telegram-qr-signin/oidc";

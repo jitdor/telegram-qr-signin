@@ -4,7 +4,7 @@
 //
 //   display  Archivo, width 80, weight 900    the headline and the ticket's name
 //   sans     Inter, variable weight           everything else
-//   mono     JetBrains Mono, variable weight  the small labels
+//   mono     Google Sans Code, variable weight  the small labels and hints
 //
 // All three are SIL Open Font License 1.1: see LICENSES.md.
 
@@ -13,7 +13,7 @@ import { FONT_DATA } from "./data.js";
 const FACES = [
   { key: "display", file: "archivo-display", family: "TQA Display", weight: "900" },
   { key: "sans", file: "inter", family: "TQA Sans", weight: "100 900" },
-  { key: "mono", file: "jetbrains-mono", family: "TQA Mono", weight: "100 800" },
+  { key: "mono", file: "google-sans-code", family: "TQA Mono", weight: "300 800" },
 ];
 
 // A short fingerprint of the bytes goes into each file name, so the files can be cached forever and

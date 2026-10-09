@@ -11,7 +11,7 @@ const get = (path, init) => new Request(`https://app.example${path}`, init);
 const fontUrls = (html) => [...html.matchAll(/url\("(\/[^"]+\.woff2)"\)/g)].map((m) => m[1]);
 
 test("the bundled fonts are real woff2 files", () => {
-  assert.deepEqual(Object.keys(FONT_DATA).sort(), ["archivo-display", "inter", "jetbrains-mono"]);
+  assert.deepEqual(Object.keys(FONT_DATA).sort(), ["archivo-display", "google-sans-code", "inter"]);
   for (const [name, base64] of Object.entries(FONT_DATA)) {
     const bytes = Buffer.from(base64, "base64");
     assert.equal(bytes.subarray(0, 4).toString("latin1"), "wOF2", name);

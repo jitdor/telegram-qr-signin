@@ -225,6 +225,21 @@ export interface Branding {
   scanEndedHeading?: string;
   /** Text under `scanEndedHeading`. */
   scanEndedText?: string;
+  /** OIDC consent screen: headline (`{name}` in the second line is the app's name), the ticket's top-left label and the warning. */
+  consentHeading?: string;
+  consentSubheading?: string;
+  consentKickerText?: string;
+  consentWarnText?: string;
+  signedInAsLabel?: string;
+  returnsLabel?: string;
+  accessLabel?: string;
+  allowText?: string;
+  denyText?: string;
+  consentFootText?: string;
+  /** OIDC error page: the headline, the label before the code and the reassurance underneath. */
+  errorHeading?: string;
+  errorCodeLabel?: string;
+  errorNoteText?: string;
   /** The page colour. Text on it is dark or white, whichever is more legible. */
   accent?: string;
   /** Replaces the mark in the top-left corner. */

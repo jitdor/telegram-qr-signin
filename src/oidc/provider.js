@@ -85,6 +85,10 @@ export function createOidcProvider(config) {
   } = config;
 
   if (!auth) throw new Error("createOidcProvider: `auth` (a telegram-qr-signin instance) is required");
+  // What the consent and error pages need to look like the sign-in page: the same fonts from the same
+  // app, and this provider's own address for the top bar.
+  const pageOptions = { branding, fontsPath: auth.paths?.fonts, origin: issuer };
+  const errorPage = (error, description) => errorResponse(error, description, pageOptions);
   if (!issuer) throw new Error("createOidcProvider: `issuer` is required");
   if (!Array.isArray(keys) || !keys.length) throw new Error("createOidcProvider: `keys` is required (see loadSigningKeys)");
   if (!clients) throw new Error("createOidcProvider: `clients` registry is required");
@@ -301,7 +305,7 @@ export function createOidcProvider(config) {
           requestId,
           csrfToken,
           actionPath: paths.consent,
-          branding,
+          ...pageOptions,
         })
       );
     }
@@ -853,8 +857,8 @@ function tokenError(error, description, status = 400) {
   return new Response(JSON.stringify({ error, error_description: description }), { status, headers });
 }
 
-function errorPage(error, description) {
-  return new Response(renderErrorPage(error, description), {
+function errorResponse(error, description, pageOptions) {
+  return new Response(renderErrorPage(error, description, pageOptions), {
     // On this HTML path "temporarily_unavailable" only ever means the rate limiter said no, hence
     // 429. The /token endpoint's 503 for the same code (refresh gate unreachable) is a different
     // condition: the service could not answer, rather than the caller asking too often.

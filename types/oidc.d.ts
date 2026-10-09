@@ -137,6 +137,7 @@ export interface OidcProviderConfig {
   store: OidcStore;
   pairwiseSalt?: string;
   basePath?: string;
+  /** The same `Branding` the sign-in page takes: the consent screen and error page are restyled by it too. */
   branding?: Record<string, string>;
   rateLimit?: (key: string, ctx: { request: Request }) => Promise<boolean> | boolean;
   onEvent?: (event: OidcEvent) => void;
@@ -179,6 +180,16 @@ export declare function renderConsentPage(params: {
   requestId: string;
   csrfToken: string;
   actionPath: string;
-  branding?: { accent?: string };
+  /** The same `Branding` as the sign-in page. */
+  branding?: Record<string, string>;
+  /** Where the bundled fonts are served from (`auth.paths.fonts`). */
+  fontsPath?: string;
+  site?: { name?: string; host?: string };
+  /** The provider's own origin (its issuer): the top bar shows its host. */
+  origin?: string;
 }): string;
-export declare function renderErrorPage(error: string, description: string): string;
+export declare function renderErrorPage(
+  error: string,
+  description: string,
+  options?: { branding?: Record<string, string>; fontsPath?: string; site?: { name?: string; host?: string }; origin?: string }
+): string;

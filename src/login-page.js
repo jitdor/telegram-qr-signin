@@ -244,13 +244,23 @@ function loginStyles(branding, fontsPath) {
     font: 500 0.85rem/1.45 var(--tqa-mono);
   }
 
-  /* The ticket. */
+  /* The ticket. The paper is painted by its two halves, so the notches can be real holes in it (masks,
+     below) that show the page through them. The ink edge is a drop shadow of each half, so it follows the
+     notches too, and the soft shadow sits underneath the whole ticket, where a hole lets it show. */
   .tqa-ticket {
-    position: relative; display: grid; grid-template-columns: minmax(0, 1fr); color: var(--tqa-ink); background: var(--tqa-paper); border-radius: 26px;
-    box-shadow: 0 2px 0 var(--tqa-ink), 0 38px 50px -28px color-mix(in srgb, var(--tqa-ink) 55%, transparent);
+    position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); color: var(--tqa-ink);
     animation: tqa-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
-  .tqa-main { min-width: 0; padding: 26px 24px 24px; container-type: inline-size; }
+  /* What box-shadow: 0 38px 50px -28px would draw, but drawn under the ticket rather than only around it. */
+  .tqa-ticket::after {
+    content: ""; position: absolute; z-index: -1; inset: 28px; transform: translateY(38px); pointer-events: none;
+    background: color-mix(in srgb, var(--tqa-ink) 55%, transparent); filter: blur(25px);
+  }
+  .tqa-main, .tqa-stub {
+    background: var(--tqa-paper); filter: drop-shadow(0 2px 0 var(--tqa-ink));
+    --tqa-bite: #0000 calc(var(--tqa-notch) - 0.5px), #000 calc(var(--tqa-notch) + 0.5px);
+  }
+  .tqa-main { min-width: 0; padding: 26px 24px 24px; container-type: inline-size; border-radius: 26px; }
   .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.66rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
   .tqa-name {
     margin: 0.6rem 0 0; padding-bottom: 1rem; border-bottom: 2px solid var(--tqa-ink);
@@ -274,17 +284,24 @@ function loginStyles(branding, fontsPath) {
   [data-tqa-state="expired"] .tqa-status::before, [data-tqa-state="denied"] .tqa-status::before { background: var(--tqa-bad); }
   .tqa-h-tap, .tqa-st-ready { display: none; }
 
-  /* The stub: the part you tear off. A dashed edge with a bite out of each end. */
+  /* The stub: the part you tear off. A dashed edge with a bite out of each end: half of each bite is cut
+     from the main part, half from the stub, both centred on the middle of the dashed line. Each mask
+     layer covers one half of its element, with the hole in that half's corner. */
+  .tqa-main:not(:last-child) {
+    border-radius: 26px 26px 0 0;
+    -webkit-mask: radial-gradient(circle at 0 calc(100% + 0.75px), var(--tqa-bite)) 0 0 / 51% 100% no-repeat,
+      radial-gradient(circle at 100% calc(100% + 0.75px), var(--tqa-bite)) 100% 0 / 51% 100% no-repeat;
+    mask: radial-gradient(circle at 0 calc(100% + 0.75px), var(--tqa-bite)) 0 0 / 51% 100% no-repeat,
+      radial-gradient(circle at 100% calc(100% + 0.75px), var(--tqa-bite)) 100% 0 / 51% 100% no-repeat;
+  }
   .tqa-stub {
     position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 24px 28px;
-    border-top: 1.5px dashed var(--tqa-rule);
+    border-top: 1.5px dashed var(--tqa-rule); border-radius: 0 0 26px 26px;
+    -webkit-mask: radial-gradient(circle at 0 0.75px, var(--tqa-bite)) 0 0 / 51% 100% no-repeat,
+      radial-gradient(circle at 100% 0.75px, var(--tqa-bite)) 100% 0 / 51% 100% no-repeat;
+    mask: radial-gradient(circle at 0 0.75px, var(--tqa-bite)) 0 0 / 51% 100% no-repeat,
+      radial-gradient(circle at 100% 0.75px, var(--tqa-bite)) 100% 0 / 51% 100% no-repeat;
   }
-  .tqa-stub::before, .tqa-stub::after {
-    content: ""; position: absolute; width: calc(var(--tqa-notch) * 2); height: calc(var(--tqa-notch) * 2); border-radius: 50%;
-    background: var(--tqa-accent); pointer-events: none;
-  }
-  .tqa-stub::before { top: calc(var(--tqa-notch) * -1 + 0.75px); left: calc(var(--tqa-notch) * -1); }
-  .tqa-stub::after { top: calc(var(--tqa-notch) * -1 + 0.75px); right: calc(var(--tqa-notch) * -1); }
   .tqa-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
   .tqa-qr-link { display: block; width: min(100%, 12.5rem); line-height: 0; transition: transform 0.2s ease; }
   .tqa-qr-link:hover { transform: translateY(-2px); }
@@ -347,9 +364,20 @@ function loginStyles(branding, fontsPath) {
   }
   @media (min-width: 900px) {
     .tqa-ticket { grid-template-columns: minmax(0, 1fr) clamp(15rem, 33%, 19rem); }
-    .tqa-stub { justify-content: center; padding: 28px 22px; border-top: 0; border-left: 1.5px dashed var(--tqa-rule); }
-    .tqa-stub::before { top: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
-    .tqa-stub::after { top: auto; right: auto; bottom: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
+    .tqa-main:not(:last-child) {
+      border-radius: 26px 0 0 26px;
+      -webkit-mask: radial-gradient(circle at calc(100% + 0.75px) 0, var(--tqa-bite)) 0 0 / 100% 51% no-repeat,
+        radial-gradient(circle at calc(100% + 0.75px) 100%, var(--tqa-bite)) 0 100% / 100% 51% no-repeat;
+      mask: radial-gradient(circle at calc(100% + 0.75px) 0, var(--tqa-bite)) 0 0 / 100% 51% no-repeat,
+        radial-gradient(circle at calc(100% + 0.75px) 100%, var(--tqa-bite)) 0 100% / 100% 51% no-repeat;
+    }
+    .tqa-stub {
+      justify-content: center; padding: 28px 22px; border-top: 0; border-left: 1.5px dashed var(--tqa-rule); border-radius: 0 26px 26px 0;
+      -webkit-mask: radial-gradient(circle at 0.75px 0, var(--tqa-bite)) 0 0 / 100% 51% no-repeat,
+        radial-gradient(circle at 0.75px 100%, var(--tqa-bite)) 0 100% / 100% 51% no-repeat;
+      mask: radial-gradient(circle at 0.75px 0, var(--tqa-bite)) 0 0 / 100% 51% no-repeat,
+        radial-gradient(circle at 0.75px 100%, var(--tqa-bite)) 0 100% / 100% 51% no-repeat;
+    }
     .tqa-stamp-mark { font-size: 1.8rem; }
     /* Room to spare: the type steps down so the ticket reads as a ticket, not as a form. */
     .tqa-headline { font-size: clamp(2rem, 11.4vw, 4rem); }
@@ -376,7 +404,6 @@ function loginStyles(branding, fontsPath) {
   /* Tablet, held upright: the stub runs along the bottom with the QR on one side and the button on the other. */
   @media (hover: none) and (pointer: coarse) and (min-width: 640px) and (max-width: 899.98px) {
     .tqa-stub { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 24px; padding: 28px 36px; }
-    .tqa-stub::before { left: calc(var(--tqa-notch) * -1); }
     .tqa-or { flex-direction: column; align-self: stretch; width: auto; }
     .tqa-or::before, .tqa-or::after { border-top: 0; border-left: 1.5px dashed var(--tqa-rule); min-height: 1.5rem; }
     .tqa-app-title, .tqa-how { display: block; }

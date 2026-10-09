@@ -81,9 +81,10 @@ test("the sidebar lists at most ten sites, says how many more, and counts people
   assert.equal((html.match(/href="\/admin\/ns\/site-/g) ?? []).length, 10);
   assert.match(html, /\+3 more/);
 
-  const withRequests = shell({ sites: [site(1, { requests: 4 }), site(2, { requests: 9, access: "anyone" })] });
+  const withRequests = shell({ sites: [site(1, { requests: 4, access: "approval" }), site(2, { requests: 9, access: "anyone" }), site(3, { requests: 7 })] });
   assert.match(withRequests, /<span class="n warn">4<\/span>/);
   assert.doesNotMatch(withRequests, />9</, "an open site has nobody to approve");
+  assert.doesNotMatch(withRequests, />7</, "an invite-only site has no queue, whatever is left in storage");
 });
 
 test("a switched-off site shows an off dot, and everything user-supplied in the shell is escaped", () => {
@@ -138,7 +139,9 @@ test("the overview adds up the sites, people, requests and admins it shows", asy
   await ctx.registry.addGrant({ namespace: "a", id: 1 });
   await ctx.registry.addGrant({ namespace: "a", id: 2 });
   await ctx.registry.addGrant({ namespace: "b", id: 3 });
+  await ctx.registry.updateNamespace("a", { access: "approval" });
   await ctx.registry.recordRequest({ namespace: "a", user: { id: 9 } });
+  await ctx.registry.recordRequest({ namespace: "b", user: { id: 7 } }); // left over from before b was invite only: not shown
   await ctx.registry.recordRequest({ namespace: "c", user: { id: 8 } });
   await post(ctx.hub, "/admin/ns/c/access", { mode: "anyone", confirm: "c" }, { cookie });
   await ctx.registry.addGrant({ namespace: "c", id: 4 }); // kept but not used: c is open

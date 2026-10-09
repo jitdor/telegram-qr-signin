@@ -16,7 +16,7 @@
 //   Admins    listAdmins() · isAdmin(id) · addAdmin({ id, label, addedBy }) · removeAdmin(id)
 //   Grants    listGrants(ns, { limit }) · addGrant({ namespace, id, label, addedBy }) · removeGrant(ns, id)
 //   Blocks    listBlocks(ns, { limit }) · addBlock({ namespace, id, label, addedBy }) · removeBlock(ns, id)
-//   Requests  recordRequest({ namespace, user }) · listRequests(ns, { limit }) · getRequest(ns, id)
+//   Requests  recordRequest({ namespace, user }) -> { isNew, attempts } · listRequests(ns, { limit }) · getRequest(ns, id)
 //             · removeRequest(ns, id)
 //   Audit     appendAudit({ actor, action, target, detail }) · listAudit({ limit })
 //
@@ -256,6 +256,7 @@ export class MemoryHubStore {
     let forSite = this.requests.get(namespace);
     if (!forSite) this.requests.set(namespace, (forSite = new Map()));
     const existing = forSite.get(id);
+    const attempts = (existing?.attempts ?? 0) + 1;
     forSite.set(id, {
       namespace,
       id,
@@ -264,12 +265,13 @@ export class MemoryHubStore {
       username: user.username ?? "",
       firstSeen: existing?.firstSeen ?? now,
       lastSeen: now,
-      attempts: (existing?.attempts ?? 0) + 1,
+      attempts,
     });
     if (forSite.size > this.requestCap) {
       const oldest = [...forSite.values()].sort((a, b) => a.lastSeen - b.lastSeen || a.id - b.id);
       for (const row of oldest.slice(0, forSite.size - this.requestCap)) forSite.delete(row.id);
     }
+    return { isNew: !existing, attempts };
   }
 
   async listRequests(namespace, { limit = DEFAULT_LIST_LIMIT } = {}) {

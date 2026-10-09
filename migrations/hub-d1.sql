@@ -20,10 +20,13 @@ CREATE TABLE IF NOT EXISTS hub_namespaces (
   name TEXT NOT NULL,
   -- 0 shuts the site: nobody signs in, and sessions already open fail on their next request.
   enabled INTEGER NOT NULL DEFAULT 1,
-  -- Who gets in: 'granted' (only people holding a row in hub_grants) or 'anyone' (any Telegram
-  -- account not in hub_blocks). Grants are kept, not consulted, while a site is 'anyone', so
-  -- switching back restores them.
-  access TEXT NOT NULL DEFAULT 'granted' CHECK (access IN ('granted', 'anyone')),
+  -- Who gets in:
+  --   'granted'   invite only: people holding a row in hub_grants, nobody else, no queue.
+  --   'approval'  the same, but a stranger's scan is recorded in hub_requests so an admin can
+  --               approve them (the admins and the person are messaged).
+  --   'anyone'    any Telegram account not in hub_blocks.
+  -- Grants are kept, not consulted, while a site is 'anyone', so switching back restores them.
+  access TEXT NOT NULL DEFAULT 'granted' CHECK (access IN ('granted', 'approval', 'anyone')),
   -- The URLs the site is served from, as a JSON array of origins: '["https://docs.example.com"]'.
   -- A site finds its own namespace by looking its origin up here, a request from any other origin is
   -- refused, and so is a scan of a QR minted anywhere else. There must always be at least one: the
@@ -64,8 +67,9 @@ CREATE TABLE IF NOT EXISTS hub_blocks (
   PRIMARY KEY (namespace, telegram_id)
 );
 
--- People who scanned a site's QR and were refused, so an admin can approve them without asking for
--- a numeric Telegram id. Capped per site by the store; safe to truncate at any time.
+-- People who scanned the QR of an 'approval' site and are waiting to be let in, so an admin can
+-- approve them without asking for a numeric Telegram id. Capped per site by the store; safe to
+-- truncate at any time.
 CREATE TABLE IF NOT EXISTS hub_requests (
   namespace TEXT NOT NULL,
   telegram_id INTEGER NOT NULL,

@@ -120,7 +120,7 @@ export function renderShell({ title, body, adminPath, session, sites = [], activ
         ? `<div class="side-title">Your sites</div>
     <nav class="nav sites-nav" aria-label="Sites">${shown
       .map(
-        (s) => `<a href="${adminPath}/ns/${esc(s.namespace)}"${active === s.namespace ? ' class="on" aria-current="page"' : ""}><span class="dot${s.enabled ? "" : " off"}" title="${s.enabled ? "On" : "Off"}"></span><span class="ellip">${esc(s.name)}</span>${s.access !== "anyone" && s.requests ? `<span class="n warn">${s.requests}</span>` : ""}</a>`
+        (s) => `<a href="${adminPath}/ns/${esc(s.namespace)}"${active === s.namespace ? ' class="on" aria-current="page"' : ""}><span class="dot${s.enabled ? "" : " off"}" title="${s.enabled ? "On" : "Off"}"></span><span class="ellip">${esc(s.name)}</span>${s.access === "approval" && s.requests ? `<span class="n warn">${s.requests}</span>` : ""}</a>`
       )
       .join("")}${sites.length > shown.length ? `<a href="${adminPath}#sites" class="more">+${sites.length - shown.length} more</a>` : ""}</nav>`
         : ""
@@ -259,6 +259,14 @@ td .btn,.act .btn{min-height:32px;padding:0 12px;font-size:.8rem}
 .warn-zone{border-color:color-mix(in srgb,var(--warn) 40%,var(--line));background:linear-gradient(var(--warn-bg),var(--panel) 140px)}
 .danger-zone{border-color:color-mix(in srgb,var(--bad) 32%,var(--line))}.danger-zone>h2 .i{color:var(--bad)}
 .callout{padding:16px 18px;border:1px dashed var(--line-2);border-radius:12px;background:var(--panel-2)}.callout strong{display:block;margin-bottom:2px}.callout ul{margin:4px 0 14px;padding-left:1.2rem}
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:6px}
+.mode{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
+.mode h3{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0;font-size:.95rem}
+.mode h3 svg{width:18px;height:18px;flex:none;color:var(--muted)}
+.mode .hint{margin:0}.mode ul{margin:4px 0 0;padding-left:1.2rem}
+.mode form{margin-top:auto;padding-top:10px;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.mode.on{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:color-mix(in srgb,var(--accent) 7%,var(--panel))}
+.mode.on h3 svg{color:var(--accent)}
 pre.code{margin:0;padding:15px 17px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel-2);font:.8rem/1.65 var(--mono);color:var(--ink-2);user-select:all}
 /* ---- activity ---- */
 .feed{margin:0;padding:0;list-style:none}

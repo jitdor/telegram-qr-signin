@@ -46,6 +46,13 @@ const auth = createSiteAuth({
   session: { secret: env.SESSION_SECRET },
 });`;
 
+// The three ways a site can decide who gets in, as the console words them.
+const MODES = {
+  granted: { label: "Invite only", icon: "lock" },
+  approval: { label: "Approval required", icon: "inbox" },
+  anyone: { label: "Anyone with Telegram", icon: "unlock" },
+};
+
 const OK_MESSAGES = {
   site_created: "Site added. Point its Worker at this namespace, then grant people access below.",
   site_saved: "Site settings saved.",
@@ -55,11 +62,14 @@ const OK_MESSAGES = {
   grants_added: (n) => `Granted access to ${n} ${n === 1 ? "person" : "people"}.`,
   grants_none: "Everyone listed already had access.",
   grant_removed: "Access revoked. It applies on their next request.",
-  request_approved: "Approved. They can sign in now.",
+  request_approved: "Approved. They can sign in now, and the bot has told them.",
+  request_approved_unnotified: "Approved. They can sign in now. The bot could not message them, so let them know yourself.",
+  request_approved_silent: "Approved. They can sign in now.",
   request_dismissed: "Request dismissed.",
   request_blocked: "Blocked, and the request removed.",
   access_open: "This site is now open to anyone with a Telegram account, except people you block.",
-  access_granted: "This site now requires approval. People without a grant are locked out on their next request.",
+  access_granted: "This site is now invite only. People you have not added are turned away, and locked out on their next request.",
+  access_approval: "This site now requires approval. Anyone can scan to ask for access; they wait under Waiting for approval, and you are messaged when someone does.",
   blocks_added: (n) => `Blocked ${n} ${n === 1 ? "person" : "people"}. It applies on their next request.`,
   blocks_none: "Everyone listed was already blocked.",
   block_removed: "Unblocked.",
@@ -114,9 +124,12 @@ const SECURITY_HEADERS = {
  * @param {number[]} options.rootAdmins  Bootstrap admins: shown, never removable here.
  * @param {string} options.adminPath   e.g. "/admin".
  * @param {string} options.secret      Session secret, from which the CSRF key is derived.
+ * @param {(approval: {namespace: string, site: object, id: number}) => Promise<boolean>} [options.onApproved]
+ *   Called after someone is approved (or granted access while they had a request waiting), to tell
+ *   them. Returns whether they were told; the console says so either way.
  * @param {(err: unknown) => void} [options.onError]
  */
-export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secret, onError = defaultOnError }) {
+export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secret, onApproved, onError = defaultOnError }) {
   const roots = new Set(rootAdmins);
   const authPrefix = `${adminPath}/auth/`;
   const csrfKey = hmacSha256(new TextEncoder().encode("TelegramQrHubCsrfKey"), secret);
@@ -222,7 +235,8 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
     ];
     const open = sites.filter((s) => s.access === "anyone").length;
     const people = sites.reduce((n, s) => n + (s.access === "anyone" ? 0 : s.users), 0);
-    const waiting = sites.reduce((n, s) => n + (s.access === "anyone" ? 0 : s.requests), 0);
+    // Only an approval site has a queue; requests left from before it was switched stay stored, unseen.
+    const waiting = sites.reduce((n, s) => n + (s.access === "approval" ? s.requests : 0), 0);
 
     const stat = (tone, ic, value, label, note = "") =>
       `<div class="stat ${tone}"><span class="ic">${icon(ic)}</span><b>${value}</b><span class="l">${label}${note ? ` <em>· ${note}</em>` : ""}</span></div>`;
@@ -242,7 +256,7 @@ ${flash(ctx.url)}
 
 <section id="sites">
   <h2>${icon("globe")}Sites <span class="count">${sites.length}</span></h2>
-  <p class="lead">Each site is a namespace on this bot. A person can sign in to a site only if they are granted access to it here.</p>
+  <p class="lead">Each site is a namespace on this bot. Each decides who gets in: only people you add, people you approve, or anyone with Telegram.</p>
   ${
     sites.length
       ? `<div class="site-list">${sites
@@ -251,11 +265,15 @@ ${flash(ctx.url)}
       ${avatar(s.name, s.namespace)}
       <span class="site-main"><strong>${esc(s.name)}</strong><span class="host">${esc(s.origins[0])}${s.origins.length > 1 ? ` +${s.origins.length - 1}` : ""}</span></span>
       <span class="site-side">
-        <span class="site-badges">${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}${s.access === "anyone" ? '<span class="pill warn">Anyone</span>' : ""}</span>
+        <span class="site-badges">${s.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>'}<span class="pill${s.access === "anyone" ? " warn" : ""}">${esc(MODES[s.access]?.label ?? s.access)}</span></span>
         ${
           s.access === "anyone"
             ? ""
-            : `<span class="site-nums"><span><b>${s.users}</b><small>people</small></span><span><b>${s.requests ? `<span class="pill warn">${s.requests}</span>` : 0}</b><small>waiting</small></span></span>`
+            : `<span class="site-nums"><span><b>${s.users}</b><small>people</small></span>${
+                s.access === "approval"
+                  ? `<span><b>${s.requests ? `<span class="pill warn">${s.requests}</span>` : 0}</b><small>waiting</small></span>`
+                  : ""
+              }</span>`
         }
       </span>
       ${icon("chevron", "i go")}
@@ -314,11 +332,13 @@ ${flash(ctx.url)}
   async function sitePage(ctx, namespace) {
     const site = await registry.getNamespace(namespace);
     if (!site) return page("Not found", `<div class="empty">${icon("alert")}<span>That site does not exist. <a href="${adminPath}">Back to all sites</a>.</span></div>`, ctx, 404);
-    const open = site.access === "anyone";
+    const mode = site.access;
+    const open = mode === "anyone";
+    const approval = mode === "approval";
     const [grants, blocks, requests] = await Promise.all([
       registry.listGrants(namespace),
       registry.listBlocks(namespace),
-      open ? [] : registry.listRequests(namespace), // an open site has nobody to approve
+      approval ? registry.listRequests(namespace) : [], // only an approval site has a queue
     ]);
     const base = `${adminPath}/ns/${namespace}`; // namespace already matched NAMESPACE_RE
     const hostOf = (origin) => origin.replace(/^https?:\/\//, "");
@@ -331,7 +351,7 @@ ${flash(ctx.url)}
 <header class="site-head">
   ${avatar(site.name, namespace, "lg")}
   <div>
-    <h1>${esc(site.name)} ${statusPill}${open ? '<span class="pill warn">Anyone with Telegram</span>' : ""}</h1>
+    <h1>${esc(site.name)} ${statusPill}<span class="pill${open ? " warn" : ""}">${esc(MODES[mode].label)}</span></h1>
     <div class="chips">${site.origins.map((o) => `<span class="chip">${icon("lock")}${esc(hostOf(o))}</span>`).join("")}</div>
   </div>
 </header>
@@ -339,7 +359,7 @@ ${flash(ctx.url)}
 <nav class="subnav" aria-label="This site">
   <a href="#settings">${icon("settings")}Settings</a>
   <a href="#urls">${icon("link")}URLs</a>
-  <a href="#access">${icon(open ? "unlock" : "lock")}Access</a>
+  <a href="#access">${icon(MODES[mode].icon)}Access</a>
   ${requests.length ? `<a href="#waiting">${icon("bell")}Waiting <span class="n warn">${requests.length}</span></a>` : ""}
   <a href="#people">${icon("users")}People <span class="n">${grants.length}</span></a>
   <a href="#blocked">${icon("ban")}Blocked <span class="n">${blocks.length}</span></a>
@@ -348,7 +368,7 @@ ${flash(ctx.url)}
 
 <div class="cols">
   <div class="mini"><b>${open ? "Anyone" : grants.length}</b><span>${open ? "can sign in" : "people with access"}</span></div>
-  <div class="mini"><b>${open ? "—" : requests.length}</b><span>waiting for approval</span></div>
+  <div class="mini"><b>${approval ? requests.length : "—"}</b><span>${approval ? "waiting for approval" : "no approval queue"}</span></div>
   <div class="mini"><b>${blocks.length}</b><span>blocked</span></div>
   <div class="mini"><b>${site.origins.length}</b><span>${site.origins.length === 1 ? "URL" : "URLs"}</span></div>
 </div>
@@ -394,42 +414,31 @@ ${flash(ctx.url)}
     <p class="hint">Scheme and host (and port, if not the default) are what count; any path is ignored. Removing a URL stops working for people on it immediately.</p>`)}
 </section>
 
-${
-  open
-    ? `<section id="access" class="warn-zone">
-  <h2>${icon("unlock")}Who can sign in <span class="pill warn">Anyone with Telegram</span></h2>
-  <p class="lead">Any Telegram account can sign in to this site unless it is blocked below. This site is responsible for its own accounts and moderation: the hub only proves who someone is.</p>
-  ${postForm(ctx, `${base}/access`, `
-    <input type="hidden" name="mode" value="granted">
-    <div class="row"><button class="btn primary">Require approval again</button></div>
-    <p class="hint">People without a grant are locked out on their next request. Grants made earlier are still there.</p>`)}
-</section>`
-    : `<section id="access">
-  <h2>${icon("lock")}Who can sign in <span class="pill">Approved people only</span></h2>
-  <p class="lead">Only the people you grant access to below can sign in to this site.</p>
-  <div class="callout">
-    <strong>Open this site to anyone with a Telegram account</strong>
-    <p class="hint">For public sites such as a forum. Before you do:</p>
-    <ul class="hint">
-      <li>Anyone can sign in. The grant list below stops being used (it is kept, in case you switch back).</li>
-      <li>The hub only proves who someone is. The site must keep its own accounts, keyed on the Telegram id, and do its own moderation and rate limiting.</li>
-      <li>You can still block individual people.</li>
-    </ul>
-    ${postForm(ctx, `${base}/access`, `
-      <input type="hidden" name="mode" value="anyone">
-      <div class="row">
-        <label><span>Type <code>${esc(namespace)}</code> to confirm</span><input name="confirm" required autocomplete="off" spellcheck="false"></label>
-        <button class="btn danger">Open to anyone</button>
-      </div>`)}
+<section id="access"${open ? ' class="warn-zone"' : ""}>
+  <h2>${icon(MODES[mode].icon)}Who can sign in <span class="pill${open ? " warn" : ""}">${esc(MODES[mode].label)}</span></h2>
+  <p class="lead">${
+    open
+      ? "Any Telegram account can sign in to this site unless it is blocked below. This site is responsible for its own accounts and moderation: the hub only proves who someone is."
+      : approval
+        ? "Anyone can scan this site's QR code to ask for access. They wait under Waiting for approval until you approve them, and only people you have approved can sign in."
+        : "Only the people you add below can sign in. Anyone else is turned away, and nothing is recorded about them."
+  }</p>
+  <div class="modes">
+    ${modeCard(ctx, base, namespace, "granted", mode, "Only people you add can sign in. A stranger who scans is turned away and shown their Telegram id to send you.")}
+    ${modeCard(ctx, base, namespace, "approval", mode, "Anyone can scan to register, then waits for you. You are messaged when someone asks, and they are messaged when you approve them.")}
+    ${modeCard(ctx, base, namespace, "anyone", mode, "For public sites such as a forum. Any Telegram account can sign in, except people you block.", `
+      <ul class="hint">
+        <li>The grant list stops being used. It is kept, in case you switch back.</li>
+        <li>The hub only proves who someone is. The site must keep its own accounts, keyed on the Telegram id, and do its own moderation and rate limiting.</li>
+      </ul>`)}
   </div>
-</section>`
-}
+</section>
 
 ${
   requests.length
     ? `<section id="waiting">
   <h2>${icon("bell")}Waiting for approval <span class="pill warn">${requests.length}</span></h2>
-  <p class="lead">These people scanned this site's QR code and were turned away. Approve to grant access, dismiss to forget the request, or block to refuse them for good.</p>
+  <p class="lead">These people scanned this site's QR code and asked to be let in. Approve to grant access and tell them, dismiss to forget the request, or block to refuse them for good.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Person</th><th>Telegram id</th><th class="num hide-sm">Tries</th><th class="hide-sm">Last seen</th><th></th></tr></thead>
     <tbody>${requests
@@ -460,7 +469,13 @@ ${
       <label>Note (optional)<input name="label" maxlength="80" placeholder="e.g. Finance team" autocomplete="off"></label>
       <button class="btn primary">Grant access</button>
     </div>
-    <p class="hint">Separate ids with commas, spaces or new lines.${open ? "" : " If you do not know someone's id, ask them to scan this site's QR code: they will appear under <em>Waiting for approval</em>."}</p>`)}
+    <p class="hint">Separate ids with commas, spaces or new lines.${
+      open
+        ? ""
+        : approval
+          ? " If you do not know someone's id, they only need to scan this site's QR code: they will appear under <em>Waiting for approval</em>."
+          : " Anyone you have not added is shown their Telegram id when they scan, so they can send it to you."
+    }</p>`)}
   ${
     grants.length
       ? `<div class="table-wrap"><table>
@@ -634,7 +649,7 @@ ${
     }
     await registry.updateNamespace(namespace, { access: mode });
     await audit(session, "site.access", namespace, `${before.access} -> ${mode}`);
-    return redirect(back, { ok: mode === "anyone" ? "access_open" : "access_granted" });
+    return redirect(back, { ok: { anyone: "access_open", approval: "access_approval" }[mode] ?? "access_granted" });
   }
 
   async function deleteSite({ form, session }, namespace) {
@@ -659,9 +674,14 @@ ${
 
     const label = cleanLabel(form.get("label"));
     const added = [];
+    const waiting = [];
     for (const id of ids) {
+      // Someone granted access by id while their request was still in the queue is approved: clear
+      // the request, and tell them, exactly as if the admin had pressed Approve.
+      if (await registry.removeRequest(namespace, id)) waiting.push(id);
       if (await registry.addGrant({ namespace, id, label, addedBy: Number(session.id) })) added.push(id);
     }
+    for (const id of waiting) await tellApproved(namespace, id);
     if (!added.length) return redirect(back, { ok: "grants_none" });
     await audit(session, "grant.add", namespace, `${added.length}: ${added.join(", ")}`);
     return redirect(back, { ok: "grants_added", n: added.length });
@@ -727,7 +747,22 @@ ${
     await registry.addGrant({ namespace, id, label, addedBy: Number(session.id) });
     await registry.removeRequest(namespace, id);
     await audit(session, "grant.add", namespace, `${id} (approved request)`);
-    return redirect(back, { ok: "request_approved" });
+    return redirect(back, { ok: await tellApproved(namespace, id) });
+  }
+
+  /**
+   * Tells someone they were approved and returns the notice code for the console to show. The
+   * grant is already written, so a failed message is reported, never an error.
+   */
+  async function tellApproved(namespace, id) {
+    if (!onApproved) return "request_approved_silent";
+    try {
+      const site = await registry.getNamespace(namespace);
+      return site && (await onApproved({ namespace, site, id })) ? "request_approved" : "request_approved_unnotified";
+    } catch (err) {
+      onError(err);
+      return "request_approved_unnotified";
+    }
   }
 
   async function addAdmin({ form, session }) {
@@ -759,6 +794,26 @@ ${
   }
 
   /** Renders a POST form carrying the CSRF token. `inline` forms sit inside a table cell. */
+  /** One of the three ways to decide who gets in: the current one is marked, the others are a button. */
+  function modeCard(ctx, base, namespace, mode, current, blurb, extra = "") {
+    const info = MODES[mode];
+    const on = mode === current;
+    const confirm =
+      mode === "anyone"
+        ? `<label><span>Type <code>${esc(namespace)}</code> to confirm</span><input name="confirm" required autocomplete="off" spellcheck="false"></label>`
+        : "";
+    return `<div class="mode${on ? " on" : ""}${mode === "anyone" ? " risky" : ""}">
+      <h3>${icon(info.icon)}${esc(info.label)}${on ? ' <span class="pill on">Current</span>' : ""}</h3>
+      <p class="hint">${esc(blurb)}</p>
+      ${on ? "" : extra}
+      ${
+        on
+          ? ""
+          : postForm(ctx, `${base}/access`, `<input type="hidden" name="mode" value="${mode}">${confirm}<button class="btn ${mode === "anyone" ? "danger" : "primary"}">${mode === "anyone" ? "Open to anyone" : `Switch to ${esc(info.label.toLowerCase())}`}</button>`)
+      }
+    </div>`;
+  }
+
   function postForm(ctx, action, inner, variant = "") {
     return `<form method="post" action="${esc(action)}"${variant ? ` class="${variant}"` : ""}><input type="hidden" name="csrf" value="${esc(ctx.csrf)}">${inner}</form>`;
   }

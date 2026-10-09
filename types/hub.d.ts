@@ -4,11 +4,14 @@ import type { Gate, LoginStore, TelegramApi, TelegramQrAuth, TelegramQrAuthConfi
 
 /**
  * Who a site lets in.
- *  - `"granted"`: only people holding a grant (the default).
+ *  - `"granted"`: invite only. Only people holding a grant; a stranger is turned away and shown their
+ *    Telegram id, and nothing is recorded about them (the default).
+ *  - `"approval"`: only people holding a grant, but a stranger's scan is recorded as a request, the
+ *    super admins are messaged, and the person is messaged when someone approves them.
  *  - `"anyone"`: any Telegram account that is not blocked. The hub only proves who someone is; the
  *    site keeps its own accounts and does its own moderation.
  */
-export type HubAccessMode = "granted" | "anyone";
+export type HubAccessMode = "granted" | "approval" | "anyone";
 
 export interface HubNamespace {
   namespace: string;
@@ -125,7 +128,8 @@ export interface HubStore {
   addBlock(block: { namespace: string; id: number; label?: string; addedBy?: number | null }): Promise<boolean>;
   removeBlock(namespace: string, id: number | string): Promise<boolean>;
 
-  recordRequest(request: { namespace: string; user: Pick<AuthUser, "id"> & Partial<AuthUser> }): Promise<void>;
+  /** `isNew` is false when this person already had a request waiting; `attempts` counts the scans. */
+  recordRequest(request: { namespace: string; user: Pick<AuthUser, "id"> & Partial<AuthUser> }): Promise<{ isNew: boolean; attempts: number }>;
   listRequests(namespace: string, options?: { limit?: number }): Promise<HubRequest[]>;
   getRequest(namespace: string, id: number | string): Promise<HubRequest | null>;
   removeRequest(namespace: string, id: number | string): Promise<boolean>;
@@ -166,6 +170,12 @@ export interface HubConfig {
   webhookSecret?: string;
   webhookPath?: string;
   adminPath?: string;
+  /**
+   * The console's public URL, such as "https://hub.example.com/admin", for the link in the message
+   * super admins get when someone asks to join a site. Defaults to the address Telegram calls the
+   * webhook at.
+   */
+  adminUrl?: string;
   adminSessionSeconds?: number;
   qrOrigin?: string;
   branding?: Branding;
@@ -239,7 +249,10 @@ export declare class OriginInUseError extends Error {
 export declare function hubGate(options: {
   registry: HubStore;
   namespace: string;
+  /** Only an `"approval"` site records requests. */
   recordRequests?: boolean | (() => boolean);
+  /** Called after a scan was written down as a request, so you can tell the admins. */
+  onRequest?: (request: { user: AuthUser; isNew: boolean; attempts: number }) => void | Promise<void>;
   onError?: (err: unknown) => void;
 }): Gate;
 

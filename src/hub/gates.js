@@ -5,9 +5,9 @@ import { parseIdList } from "../gates.js";
 import { originOfRequest } from "./validate.js";
 
 /**
- * Who may sign in to the site registered as `namespace`. In the default "granted" mode that is
- * whoever holds a grant for it in the registry; in "anyone" mode it is any Telegram account. A
- * block refuses someone in both modes, and beats a grant. Read live — one query per check, no
+ * Who may sign in to the site registered as `namespace`. In "granted" (invite only) and "approval"
+ * mode that is whoever holds a grant for it in the registry; in "anyone" mode it is any Telegram
+ * account. A block refuses someone in every mode, and beats a grant. Read live — one query per check, no
  * cache — so revoking or blocking in the console locks someone out of the site on their next
  * request, which is the same guarantee chatMember gives.
  *
@@ -16,19 +16,24 @@ import { originOfRequest } from "./validate.js";
  *   "namespace_disabled" the site is switched off in the console
  *   "origin_not_allowed" the request came to a URL this namespace is not registered for
  *   "blocked"            this person is on the site's block list
- *   "not_granted"        the site needs a grant, and this person has none
+ *   "not_granted"        an invite-only site, and this person has no grant
+ *   "pending_approval"   an approval site, and this person has no grant yet. `requested` says
+ *                        whether this refusal was written down as a request for an admin to answer
  *   "hub_unavailable"    the registry could not be read (transient: retry, do not sign anyone out)
  *
  * @param {object} options
  * @param {object} options.registry   A HubStore.
  * @param {string} options.namespace
- * @param {boolean|(() => boolean)} [options.recordRequests=true]  Remember refused scans, so an
- *   admin can approve the person from the console without being told their numeric id. Only acts at
- *   `stage: "confirm"` — a refused scan, not a stale cookie — and only for a site that needs
- *   grants, since an open site has nobody to approve. A function is asked each time.
+ * @param {boolean|(() => boolean)} [options.recordRequests=true]  Remember the scan as a request, so
+ *   an admin can approve the person from the console without being told their numeric id. Only
+ *   acts at `stage: "confirm"` — a scan, not a stale cookie — and only for a site in "approval"
+ *   mode: an invite-only site keeps no record of strangers, and an open site has nobody to approve.
+ *   A function is asked each time.
+ * @param {(request: {user: object, isNew: boolean, attempts: number}) => void} [options.onRequest]
+ *   Called after a request has been written down, so the caller can tell the admins.
  * @param {(err: unknown) => void} [options.onError]
  */
-export function hubGate({ registry, namespace, recordRequests = true, onError = defaultOnError }) {
+export function hubGate({ registry, namespace, recordRequests = true, onRequest, onError = defaultOnError }) {
   if (!registry) throw new Error("hubGate: `registry` is required");
   if (!namespace) throw new Error("hubGate: `namespace` is required");
 
@@ -61,15 +66,25 @@ export function hubGate({ registry, namespace, recordRequests = true, onError = 
     if (state.blocked) return { ok: false, reason: "blocked" };
     if (state.mode === "anyone" || state.granted) return true;
 
+    // Invite only: a stranger is turned away and nothing is kept about them.
+    if (state.mode !== "approval") return { ok: false, reason: "not_granted" };
+
+    let requested = false;
     const record = typeof recordRequests === "function" ? recordRequests() : recordRequests;
     if (ctx?.stage === "confirm" && record) {
       try {
-        await registry.recordRequest({ namespace, user });
+        const { isNew, attempts } = (await registry.recordRequest({ namespace, user })) ?? {};
+        requested = true;
+        try {
+          await onRequest?.({ user, isNew: isNew !== false, attempts: attempts ?? 1 });
+        } catch (err) {
+          onError(err);
+        }
       } catch (err) {
         onError(err); // Best effort: the refusal stands whether or not it was written down.
       }
     }
-    return { ok: false, reason: "not_granted" };
+    return { ok: false, reason: "pending_approval", requested };
   };
 }
 

@@ -316,17 +316,21 @@ export class D1HubStore {
   // --- Access requests -------------------------------------------------------------------------
 
   async recordRequest({ namespace, user }) {
-    await this.db
+    // RETURNING gives the count this very statement produced, so "is this the first time" is
+    // decided atomically: of two scans racing for the same person, exactly one sees attempts = 1.
+    const row = await this.db
       .prepare(
         `INSERT INTO ${this.t.requests}
            (namespace, telegram_id, first_name, last_name, username, first_seen, last_seen, attempts)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1)
          ON CONFLICT (namespace, telegram_id) DO UPDATE SET
            first_name = excluded.first_name, last_name = excluded.last_name, username = excluded.username,
-           last_seen = excluded.last_seen, attempts = attempts + 1`
+           last_seen = excluded.last_seen, attempts = attempts + 1
+         RETURNING attempts`
       )
       .bind(namespace, Number(user.id), user.first_name ?? "", user.last_name ?? "", user.username ?? "", nowSeconds())
-      .run();
+      .first();
+    const attempts = Number(row?.attempts ?? 1);
     // Keep only the most recently seen `requestCap`, so strangers scanning a site's QR cannot grow
     // this table without bound.
     await this.db
@@ -337,6 +341,7 @@ export class D1HubStore {
       )
       .bind(namespace, this.requestCap)
       .run();
+    return { isNew: attempts === 1, attempts };
   }
 
   async listRequests(namespace, { limit = DEFAULT_LIST_LIMIT } = {}) {

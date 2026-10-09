@@ -349,6 +349,7 @@ test("revoking removes access at once and is audited", async () => {
 test("pending requests can be approved or dismissed; approval copies the person's name into the note", async () => {
   const ctx = await setup();
   await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  await ctx.registry.updateNamespace("acme", { access: "approval" });
   await ctx.registry.recordRequest({ namespace: "acme", user: { ...MALLORY, last_name: "Doe" } });
   await ctx.registry.recordRequest({ namespace: "acme", user: BOB });
 
@@ -358,6 +359,10 @@ test("pending requests can be approved or dismissed; approval copies the person'
 
   const approved = await post(ctx.hub, `/admin/ns/acme/requests/${MALLORY.id}/approve`, {}, { cookie: ctx.cookie });
   assert.equal(redirectTarget(approved).searchParams.get("ok"), "request_approved");
+  const told = ctx.telegram.calls.filter((c) => c.method === "sendMessage" && c.payload.chat_id === MALLORY.id);
+  assert.equal(told.length, 1, "the person is messaged when they are approved");
+  assert.match(told[0].payload.text, /approved for acme/i);
+  assert.match(told[0].payload.text, /https:\/\/acme\.example/, "and told where to go");
   const [grant] = await ctx.registry.listGrants("acme");
   assert.deepEqual([grant.id, grant.label, grant.addedBy], [MALLORY.id, "Mallory Doe (@mal)", ROOT.id]);
   assert.equal(await ctx.registry.getRequest("acme", MALLORY.id), null);
@@ -540,15 +545,17 @@ async function withSite(ctx = null) {
 }
 const sitePageHtml = async (ctx, ns = "forum") => (await get(ctx.hub, `/admin/ns/${ns}`, ctx.cookie)).text();
 
-test("a new site needs approval, and nothing at creation can make it open", async () => {
+test("a new site is invite only, and nothing at creation can make it open", async () => {
   const ctx = await setup();
   await post(ctx.hub, "/admin/ns", { namespace: "forum", url: "https://forum.example", name: "The forum", access: "anyone" }, { cookie: ctx.cookie });
   assert.equal((await ctx.registry.getNamespace("forum")).access, "granted");
 
   const html = await sitePageHtml(ctx);
-  assert.match(html, /Approved people only/);
-  assert.match(html, /Open this site to anyone with a Telegram account/);
+  assert.match(html, /Who can sign in <span class="pill">Invite only<\/span>/);
+  assert.match(html, /Switch to approval required/);
+  assert.match(html, /Open to anyone<\/button>/);
   assert.match(html, /keep its own accounts/i, "the responsibility shift is stated before the button");
+  assert.doesNotMatch(html, /Waiting for approval/, "an invite-only site has no queue");
 });
 
 test("the ordinary save form cannot change the access mode", async () => {
@@ -582,6 +589,7 @@ test("stray whitespace around the typed id is forgiven, as it is when deleting a
 
 test("an open site says so, hides the approval queue, and keeps the grant list for later", async () => {
   const ctx = await withSite();
+  await ctx.registry.updateNamespace("forum", { access: "approval" });
   await ctx.registry.addGrant({ namespace: "forum", id: ALICE.id, label: "Alice" });
   await ctx.registry.recordRequest({ namespace: "forum", user: MALLORY });
   assert.match(await sitePageHtml(ctx), /Waiting for approval/);
@@ -593,7 +601,8 @@ test("an open site says so, hides the approval queue, and keeps the grant list f
   assert.doesNotMatch(html, /Waiting for approval/, "nobody to approve on an open site");
   assert.match(html, /Not used while this site is open to anyone/);
   assert.match(html, /Alice/, "the grants are still listed");
-  assert.match(html, /Require approval again/);
+  assert.match(html, /Switch to invite only/);
+  assert.match(html, /Switch to approval required/);
   assert.doesNotMatch(html, /Open to anyone<\/button>/, "no second open button");
   assert.match(html, /never sees who is signed up/, "the hint about finding ids to block");
 });
@@ -603,10 +612,10 @@ test("the dashboard shows an open site as open instead of as a head count", asyn
   await ctx.registry.addGrant({ namespace: "forum", id: 1 });
   await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
   const html = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
-  assert.match(html, /<span class="pill warn">Anyone<\/span>/);
+  assert.match(html, /<span class="pill warn">Anyone with Telegram<\/span>/);
 });
 
-test("requiring approval again needs no confirmation, is audited, and locks out people without a grant", async () => {
+test("going back from open to invite only needs no confirmation, is audited, and locks out people without a grant", async () => {
   const ctx = await withSite();
   await post(ctx.hub, "/admin/ns/forum/access", { mode: "anyone", confirm: "forum" }, { cookie: ctx.cookie });
   assert.equal((await ctx.registry.access("forum", MALLORY.id)).mode, "anyone");

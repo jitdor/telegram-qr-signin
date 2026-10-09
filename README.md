@@ -126,6 +126,11 @@ files with no build step, and that is partly the point.
 wrangler kv namespace create LOGINS
 ```
 
+> KV is the quickest to set up and the slowest to sign in: it is eventually consistent, so a scan can
+> take tens of seconds to reach the browser. For anything people will actually use, swap in
+> `new D1LoginStore(env.DB)` (apply `migrations/d1.sql` once) or a Durable Object: see
+> [Picking a store](#picking-a-store).
+
 **2. The web half:**
 
 ```js
@@ -361,9 +366,9 @@ nothing at all.)
 
 | Store              | Setup                          | Use when                                                  |
 | ------------------ | ------------------------------ | --------------------------------------------------------- |
-| `KVLoginStore`     | `wrangler kv namespace create` | **The default.** No schema, no migration, TTL cleanup free |
-| `D1LoginStore`     | one table, one migration       | You want strictly atomic single-use, or already run D1     |
-| `DoLoginStore`     | one Durable Object class       | Atomic + consistent, with no database to provision         |
+| `D1LoginStore`     | one table, one migration       | **Recommended for Workers.** Strongly consistent: a scan reaches the browser on its next poll, and one scan is one sign-in |
+| `DoLoginStore`     | one Durable Object class       | The same guarantees, with no database to provision         |
+| `KVLoginStore`     | `wrangler kv namespace create` | Nothing to migrate, TTL cleanup free, **but slow**: a confirmed scan can take tens of seconds to show up (see below) |
 | `MemoryLoginStore` | nothing                        | Both halves in one process, or tests                       |
 
 ```js
@@ -390,8 +395,10 @@ same `telegram-qr-signin/do` entry point (also re-exported by `telegram-qr-signi
 hold both. If the bot is a separate Worker, bind the
 class there with `script_name`, and use the same `name` on both sides.
 
-**The KV trade-off, stated honestly.** KV is eventually consistent, so a confirmation may take an
-extra poll cycle to become visible — invisible against a 2-second poll and a 10-minute TTL. And its
+**The KV trade-off, stated honestly.** KV is eventually consistent, and for a sign-in that is a real
+cost: the browser polls for a record the bot has just written, and a Worker that has already read the
+old "pending" value can keep being served it for tens of seconds, so people sit on "Waiting for
+Telegram…" long after they approved in the app. Use KV only if a delay like that is fine for you. And its
 `confirm` and `consume` are read-then-write with no compare-and-swap available, so two *genuinely
 simultaneous* scans of the same QR could both succeed, and two polls landing in the same instant
 could both redeem one confirmation. Note what that costs: every resulting session belongs to
@@ -617,8 +624,8 @@ import { createHub, createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
 // The hub Worker: the only one with the bot token. Serves /telegram/webhook and /admin.
 const hub = createHub({
   botToken, botUsername,
-  store: new KVLoginStore(env.LOGINS),   // shared with every site
-  registry: new D1HubStore(env.HUB_DB),  // the access list
+  store: new D1LoginStore(env.HUB_DB),   // shared with every site (D1: a scan shows up at once)
+  registry: new D1HubStore(env.HUB_DB),  // the access list, in the same database
   superAdmins: "123456789",              // can always reach the console
   sessionSecret: env.CONSOLE_SESSION_SECRET,
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
@@ -630,7 +637,8 @@ const auth = createSiteAuth({ botUsername, store, registry, session: { secret } 
 ```
 
 Super admins sign in to `/admin` with the same QR scan, register sites, grant and revoke people per
-site, approve people who were turned away, block people, and see an audit log. A namespace is bound
+site, block people, and see an audit log. Each site is invite only, approval required (a scan is a
+registration: the admins are messaged, and the person is messaged when approved) or open. A namespace is bound
 to the URL(s) its site is served from, and a site works out which one it is from the URL it was
 reached at, so there is no id to keep in step and a stray deployment cannot borrow another's. A site can also be
 opened to anyone with a Telegram account (a forum, say) — a deliberate, confirmed step that leaves

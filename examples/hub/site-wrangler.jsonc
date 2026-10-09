@@ -6,8 +6,7 @@
   // SESSION_SECRET is a secret, and must differ per site.
   "vars": { "TELEGRAM_BOT_USERNAME": "your_bot" },
 
-  // Both bindings point at the hub's resources — copy the ids from ./wrangler.jsonc.
-  "kv_namespaces": [{ "binding": "LOGINS", "id": "<same id as the hub>" }],
+  // The hub's database, which holds the registry and the login table — copy the id from ./wrangler.jsonc.
   "d1_databases": [{ "binding": "HUB_DB", "database_name": "hub", "database_id": "<same id as the hub>" }],
 
   "observability": { "enabled": true }

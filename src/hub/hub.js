@@ -22,11 +22,16 @@ import { TelegramClient } from "../telegram.js";
 import { tokenPattern } from "../crypto.js";
 import { hubGate, superAdminGate, parseRootAdmins } from "./gates.js";
 import { createAdminConsole } from "./console.js";
-import { ADMIN_NAMESPACE, NAMESPACE_RE, cleanName } from "./validate.js";
+import { ADMIN_NAMESPACE, NAMESPACE_RE, cleanName, describeUser } from "./validate.js";
 
 const PATH_RE = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
 const TOKEN_RE = tokenPattern(16); // sites use the default token size; the hub does not know otherwise
 const ADMIN_KEY_LABEL = "TelegramQrHubAdminSession";
+
+// How many "someone asked to join" messages the super admins get per site per hour. One more says
+// that the rest are not being announced; after that, silence until the hour is up. The requests are
+// all still in the console, so a flood of scans costs the admins at most six messages.
+const REQUEST_NOTICES_PER_HOUR = 5;
 
 /**
  * @param {object} config
@@ -41,6 +46,9 @@ const ADMIN_KEY_LABEL = "TelegramQrHubAdminSession";
  * @param {string} [config.webhookSecret]  The `secret_token` given to setWebhook. Set it.
  * @param {string} [config.webhookPath="/telegram/webhook"]
  * @param {string} [config.adminPath="/admin"]
+ * @param {string} [config.adminUrl]       The console's public URL, such as "https://hub.example.com/admin",
+ *   for the link in the message super admins get when someone asks to join a site. Without it the
+ *   hub uses the address Telegram's webhook calls it at.
  * @param {number} [config.adminSessionSeconds=28800]  Console sign-ins last 8 hours by default.
  * @param {string} [config.qrOrigin]       See createTelegramQrAuth — applies to the console's QR.
  * @param {object} [config.branding]       Overrides for the console's sign-in page.
@@ -59,6 +67,7 @@ export function createHub(config) {
     webhookSecret,
     webhookPath = "/telegram/webhook",
     adminPath = "/admin",
+    adminUrl,
     adminSessionSeconds = 8 * 3600,
     qrOrigin,
     branding,
@@ -113,7 +122,15 @@ export function createHub(config) {
     },
   });
 
-  const adminConsole = createAdminConsole({ auth: adminAuth, registry, rootAdmins, adminPath, secret: sessionSecret, onError });
+  const adminConsole = createAdminConsole({
+    auth: adminAuth,
+    registry,
+    rootAdmins,
+    adminPath,
+    secret: sessionSecret,
+    onError,
+    onApproved: (approval) => notifyApproved(approval),
+  });
   const handleAdminStart = createStartHandler(adminAuth, { telegram });
 
   /** `[namespace, token]` from a /start message, shaped like createTelegramQrAuth's own parser. */
@@ -166,7 +183,11 @@ export function createHub(config) {
       await reply(message, `That sign-in code came from a site that isn't registered for ${cleanName(site.name) || site.namespace}. Open the real site and scan the code it shows.`);
       return true;
     }
-    return createStartHandler(botAuthFor(site, message.from, live), { telegram })(update);
+    const outcome = { request: null };
+    const handled = await createStartHandler(botAuthFor(site, message.from, live, outcome), { telegram })(update);
+    // After the person has their reply: telling the admins is slower and is nobody's business to wait on.
+    if (outcome.request?.isNew) await announceRequest(site, message.from);
+    return handled;
   }
 
   /**
@@ -179,10 +200,19 @@ export function createHub(config) {
    * a block added mid-scan). The start handler reads `botDeniedText` only after the gate has run,
    * which is why a getter can see the outcome.
    */
-  function botAuthFor(site, from, live) {
+  function botAuthFor(site, from, live, outcome) {
     const name = cleanName(site.name) || site.namespace;
-    const gate = hubGate({ registry, namespace: site.namespace, recordRequests: live, onError });
+    const gate = hubGate({
+      registry,
+      namespace: site.namespace,
+      recordRequests: live,
+      onRequest: (request) => {
+        outcome.request = request;
+      },
+      onError,
+    });
     let refusal = null;
+    let requested = false;
 
     return createTelegramQrAuth({
       botUsername,
@@ -193,6 +223,7 @@ export function createHub(config) {
       authorize: async (user, ctx) => {
         const result = await gate(user, ctx);
         refusal = result === true ? null : result.reason;
+        requested = result !== true && result.requested === true;
         return result;
       },
       session: { secret: sessionSecret },
@@ -204,6 +235,11 @@ export function createHub(config) {
               return `${name} is switched off right now.`;
             case "blocked":
               return `🚫 You can't sign in to ${name}.`;
+            case "pending_approval":
+              if (!requested) return `🔒 You don't have access to ${name} yet. Ask an administrator to approve you.`;
+              return outcome.request?.isNew === false
+                ? `⏳ Your request to join ${name} is still waiting for approval. I'll message you here as soon as it's approved.`
+                : `📝 Request received. An administrator will review your request to join ${name}, and I'll message you here once you're approved.`;
             default:
               return `🔒 You don't have access to ${name} yet.\nYour Telegram ID is ${from.id} — send it to an administrator to be added.`;
           }
@@ -213,14 +249,70 @@ export function createHub(config) {
   }
 
   async function reply(message, text) {
+    await dm(message.chat.id, text);
+  }
+
+  /** Sends a message; true if Telegram took it. A person who has blocked the bot cannot be reached. */
+  async function dm(chatId, text) {
     try {
-      await telegram.call("sendMessage", { chat_id: message.chat.id, text });
+      await telegram.call("sendMessage", { chat_id: chatId, text });
+      return true;
+    } catch (err) {
+      onError(err);
+      return false;
+    }
+  }
+
+  /** The console approved someone: tell them. Returns whether the message was delivered. */
+  async function notifyApproved({ site, id }) {
+    const name = cleanName(site.name) || site.namespace;
+    return dm(id, `✅ You've been approved for ${name}.\nOpen ${site.origins[0]} and scan the sign-in QR code again to get in.`);
+  }
+
+  // The address Telegram last called the webhook at, for the link in admin messages when adminUrl
+  // is not configured. It is the hub's own public origin by construction: Telegram is calling it.
+  let webhookOrigin = null;
+
+  function consoleLink(namespace) {
+    const base = adminUrl ? String(adminUrl).replace(/\/+$/, "") : webhookOrigin ? `${webhookOrigin}${adminPath}` : null;
+    return base ? `\nReview: ${base}/ns/${namespace}#waiting` : "";
+  }
+
+  /**
+   * Tells the super admins that someone asked to join a site, once per person (a repeat scan by the
+   * same person does not message anyone again). Capped per site per hour, see REQUEST_NOTICES_PER_HOUR.
+   */
+  async function announceRequest(site, user) {
+    try {
+      const since = Math.floor(Date.now() / 1000) - 3600;
+      const recent = (await registry.listRequests(site.namespace, { limit: 100 })).filter((r) => r.firstSeen >= since).length;
+      if (recent > REQUEST_NOTICES_PER_HOUR + 1) return;
+
+      const name = cleanName(site.name) || site.namespace;
+      const who = describeUser(user);
+      const text =
+        recent > REQUEST_NOTICES_PER_HOUR
+          ? `📝 More people are asking to join ${name}. I won't message you about each one for the next hour; they are all waiting in the console.${consoleLink(site.namespace)}`
+          : `📝 ${who || "Someone"} is asking to join ${name}.\nTelegram id: ${user.id}${consoleLink(site.namespace)}`;
+
+      const admins = new Set(rootAdmins);
+      for (const admin of await registry.listAdmins()) admins.add(admin.id);
+      admins.delete(Number(user.id)); // asking to join a site you administer needs no announcement to yourself
+      for (const id of admins) await dm(id, text);
     } catch (err) {
       onError(err);
     }
   }
 
-  const webhook = createUpdateEndpoint(handleUpdate, { secretToken: webhookSecret, onUnhandled, onError });
+  const updateEndpoint = createUpdateEndpoint(handleUpdate, { secretToken: webhookSecret, onUnhandled, onError });
+  const webhook = (request) => {
+    try {
+      webhookOrigin = new URL(request.url).origin;
+    } catch {
+      // Not a URL we can use; the link is simply left out.
+    }
+    return updateEndpoint(request);
+  };
 
   /** The hub's routes, or null for any path it does not own — so it composes with other routing. */
   async function handle(request) {

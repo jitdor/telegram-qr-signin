@@ -1,16 +1,15 @@
-// Cloudflare Workers KV store — the recommended default.
+// Cloudflare Workers KV store — the easiest to set up, and not the one to reach for in production.
 //
 // Nothing to create, nothing to migrate, nothing to clean up: `wrangler kv namespace create`, add
-// the binding, done. KV's own TTL expires abandoned tokens, so there is no sweep and no cron. For
-// a ten-minute nonce hand-off that happens a handful of times a day, this is the right shape of
-// storage — a relational table would be a schema and a migration in exchange for guarantees this
-// data mostly does not need.
+// the binding, done. KV's own TTL expires abandoned tokens, so there is no sweep and no cron.
 //
 // The two places KV is weaker than D1, stated plainly so the choice is informed:
 //
-//   1. Eventual consistency. The bot's write can take a moment to become visible to the polling
-//      Worker. In practice that is an extra poll cycle or two before the page says "signed in" —
-//      the token's 10-minute TTL absorbs it comfortably.
+//   1. Eventual consistency. The bot's write can take a long time to become visible to the polling
+//      Worker: one that has already read the "pending" value may keep being served it for tens of
+//      seconds (observed: about 45), during which the sign-in page says "Waiting for Telegram…"
+//      although the person has already approved. The 10-minute TTL absorbs it, the person does not.
+//      Prefer D1LoginStore or a Durable Object whenever people will actually use the sign-in.
 //   2. `confirm` and `consume` are read-then-write, and KV has no compare-and-swap. Two *genuinely
 //      simultaneous* scans of the same QR could both succeed, and two polls landing in the same
 //      instant could both redeem one confirmation, giving two sessions. Every such session belongs

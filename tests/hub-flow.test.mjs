@@ -91,12 +91,14 @@ test("switching a site off, or deleting it, shuts it immediately and says why", 
   assert.equal((await ctx.acme.guard(makeRequest("https://acme.example/", { cookie }))).reason, "unknown_namespace");
 });
 
-test("a refused scan leaves a request an admin can approve — but only for a QR that was really minted", async () => {
+test("a scan on an approval site leaves a request an admin can approve — but only for a QR that was really minted", async () => {
   const ctx = await setup();
+  await ctx.registry.updateNamespace("acme", { access: "approval" });
   await signInToSite(ctx, ctx.acme, MALLORY);
   const requests = await ctx.registry.listRequests("acme");
   assert.deepEqual(requests.map((r) => [r.id, r.username, r.attempts]), [[MALLORY.id, "mal", 1]]);
-  assert.match(lastReply(ctx.telegram), new RegExp(`Your Telegram ID is ${MALLORY.id}`));
+  const toMallory = ctx.telegram.calls.filter((c) => c.method === "sendMessage" && c.payload.chat_id === MALLORY.id);
+  assert.match(toMallory.at(-1).payload.text, /Request received/);
 
   // A made-up payload, from someone who never saw a QR, is refused but not remembered.
   const fake = "0123456789abcdef0123456789abcdef";

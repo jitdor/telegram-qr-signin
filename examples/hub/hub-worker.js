@@ -4,7 +4,7 @@
 // Setup:
 //   wrangler d1 create hub
 //   wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/hub-d1.sql
-//   wrangler kv namespace create LOGINS                  # shared with every site Worker
+//   wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql   # the login table, in the same database
 //   wrangler secret put TELEGRAM_BOT_TOKEN
 //   wrangler secret put TELEGRAM_WEBHOOK_SECRET          # any long random string
 //   wrangler secret put CONSOLE_SESSION_SECRET           # another one; NOT the bot token
@@ -14,7 +14,7 @@
 // Then open https://<hub>/admin, scan the QR with a Telegram account whose numeric id is listed in
 // SUPER_ADMINS (see wrangler.jsonc), add a site, and grant people access.
 
-import { KVLoginStore } from "telegram-qr-signin";
+import { D1LoginStore } from "telegram-qr-signin";
 import { createHub, D1HubStore } from "telegram-qr-signin/hub";
 
 export default {
@@ -24,7 +24,9 @@ export default {
       botUsername: env.TELEGRAM_BOT_USERNAME,
 
       // Where a scan is handed from the bot to the site's browser. Every site binds the same one.
-      store: new KVLoginStore(env.LOGINS),
+      // D1, not KV: KV is eventually consistent, so a confirmed scan can take tens of seconds to reach
+      // the site's browser. The same database as the registry, so there is nothing more to bind.
+      store: new D1LoginStore(env.HUB_DB),
 
       // The access list. Every site reads it on each guarded request; this Worker's console writes it
       // (a site's own moderation may also call registry.addBlock to ban someone — see docs/hub.md).

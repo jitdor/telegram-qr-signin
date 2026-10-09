@@ -68,6 +68,7 @@ test("package.json exports the hub entry point and its migration", () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(pkg.exports["./hub"], { types: "./types/hub.d.ts", default: "./src/hub/index.js" });
   assert.equal(pkg.exports["./migrations/hub-d1.sql"], "./migrations/hub-d1.sql");
+  assert.equal(pkg.exports["./migrations/hub-d1-upgrade-1.1.sql"], "./migrations/hub-d1-upgrade-1.1.sql");
 });
 
 test("the hub entry point exports what its types and docs promise", async () => {

@@ -60,6 +60,7 @@
     "./migrations/d1.sql": "./migrations/d1.sql",
     "./migrations/oidc-d1.sql": "./migrations/oidc-d1.sql",
     "./migrations/hub-d1.sql": "./migrations/hub-d1.sql",
+    "./migrations/hub-d1-upgrade-1.1.sql": "./migrations/hub-d1-upgrade-1.1.sql",
     "./package.json": "./package.json",
     "./oidc": {
       "types": "./types/oidc.d.ts",

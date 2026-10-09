@@ -28,7 +28,7 @@ Three Workers' worth of roles, but only two things are shared between them:
 
 | Shared | What it is | Who writes it |
 | --- | --- | --- |
-| **Login store** (KV, D1 or a Durable Object) | The 10-minute hand-off record for a scan | Sites mint, the hub confirms |
+| **Login store** (D1, recommended, or a Durable Object) | The 10-minute hand-off record for a scan | Sites mint, the hub confirms |
 | **Registry** (`D1HubStore`) | Sites, grants, blocks, super admins, requests, audit log | The hub's console. A site writes it only if you make its moderation call `addBlock` (see [Open sites](#open-sites)) |
 
 **Sites never hold the bot token.** Only the hub talks to Telegram, so a compromised site cannot
@@ -39,7 +39,7 @@ impersonate the bot or message your users.
 **1. The hub Worker** — [`examples/hub/hub-worker.js`](../examples/hub/hub-worker.js):
 
 ```js
-import { KVLoginStore } from "telegram-qr-signin";
+import { D1LoginStore } from "telegram-qr-signin";
 import { createHub, D1HubStore } from "telegram-qr-signin/hub";
 
 export default {
@@ -47,7 +47,7 @@ export default {
     createHub({
       botToken: env.TELEGRAM_BOT_TOKEN,
       botUsername: env.TELEGRAM_BOT_USERNAME,
-      store: new KVLoginStore(env.LOGINS),
+      store: new D1LoginStore(env.HUB_DB),       // the same database as the registry
       registry: new D1HubStore(env.HUB_DB),
       superAdmins: env.SUPER_ADMINS,             // "123456789,987654321"
       sessionSecret: env.CONSOLE_SESSION_SECRET, // its own secret, not the bot token
@@ -59,7 +59,7 @@ export default {
 ```bash
 wrangler d1 create hub
 wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/hub-d1.sql
-wrangler kv namespace create LOGINS
+wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql   # the login table
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<hub>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 ```
 
@@ -71,13 +71,13 @@ console proposes an id (`internal-docs`) that you can edit before saving. Grant 
 `createTelegramQrAuth` with the hub's gate already wired in:
 
 ```js
-import { KVLoginStore } from "telegram-qr-signin";
+import { D1LoginStore } from "telegram-qr-signin";
 import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
 
 const auth = createSiteAuth({
   botUsername: env.TELEGRAM_BOT_USERNAME,  // no bot token, and no site id: see below
-  store: new KVLoginStore(env.LOGINS),     // the SAME store as the hub
-  registry: new D1HubStore(env.HUB_DB),    // the SAME database as the hub
+  store: new D1LoginStore(env.HUB_DB),     // the SAME database as the hub
+  registry: new D1HubStore(env.HUB_DB),    // and the same binding for the registry
   session: { secret: env.SESSION_SECRET }, // required, and different for every site
 });
 
@@ -100,7 +100,7 @@ nothing to drift out of step with the console. At a URL that is not registered i
 no QR, no login page, no session. (Costs one extra registry query per request. Pass `namespace` to
 pin the site instead and skip it. Everything here works the same either way.)
 
-Both bindings (`LOGINS`, `HUB_DB`) point at the hub's resources — copy the ids into the site's
+The one binding (`HUB_DB`) points at the hub's database — copy its id into the site's
 `wrangler.jsonc` ([`site-wrangler.jsonc`](../examples/hub/site-wrangler.jsonc)). Everything else
 `createTelegramQrAuth` takes (`branding`, `claims`, `redirectTo`, `qrOrigin`, …) works unchanged.
 To also require, say, group membership, pass `authorize: chatMember({ chatId })` and a `botToken`:
@@ -136,9 +136,9 @@ Server-rendered, no JavaScript, no external requests. Everything is behind the s
 | --- | --- |
 | **Sites** | Add a site (display name and the URL it is served from, then confirm its suggested id), rename it, switch sign-in off and on, delete it |
 | **Site URLs** | Add or remove the origins a site is served from — the namespace works only there |
-| **Who can sign in** | Keep a site to approved people (the default), or [open it to anyone](#open-sites) with a Telegram account |
+| **Who can sign in** | Choose one of [three modes](#who-gets-in): invite only (the default), approval required, or [open to anyone](#open-sites) with a Telegram account |
 | **People with access** | Grant by Telegram id (paste many at once, with an optional note), revoke |
-| **Waiting for approval** | People who scanned a site's QR and were refused. Approve with one click, dismiss, or block — no need to ask anyone for their numeric id |
+| **Waiting for approval** | On an approval-required site: people who scanned its QR and asked to join. Approve with one click (the bot tells them), dismiss, or block — no need to ask anyone for their numeric id |
 | **Blocked people** | Refuse someone from a site whatever else is true of them — works on open sites too |
 | **Super admins** | Add and remove other super admins |
 | **Recent activity** | An audit log of every change: who, what, which site |
@@ -146,8 +146,8 @@ Server-rendered, no JavaScript, no external requests. Everything is behind the s
 Revoking, blocking, disabling and deleting take effect on the person's **next request** to the site, not when
 their cookie expires — the same live-check guarantee `chatMember` gives.
 
-When someone is turned away, the bot tells them their Telegram id and the site's name, so even
-without the approval queue they have something to send an admin.
+When someone is turned away from an invite-only site, the bot tells them their Telegram id and the
+site's name, so they have something to send an admin.
 
 ### Roles
 
@@ -226,11 +226,51 @@ whatever origin it liked. Binding stops mistakes — staging on production's nam
 to the wrong place, a site nobody registered — and makes each one visible; it is not a defence against
 a hostile site you have already given the shared bindings. Keep those bindings to Workers you trust.
 
+## Who gets in
+
+Each site has a mode, set from its page in the console (or with `access` in `createNamespace` /
+`updateNamespace`). New sites are **invite only**.
+
+| Mode | A stranger who scans | Who the admins hear from |
+| --- | --- | --- |
+| **Invite only** (`granted`) | Is turned away and shown their Telegram id. Nothing is recorded about them. | Nobody: it is not a registration, so there is nothing to announce |
+| **Approval required** (`approval`) | Is registered: the scan becomes a request under *Waiting for approval*, and the bot says so. | Every super admin is messaged, once per person |
+| **Anyone with Telegram** (`anyone`) | Signs in. See [open sites](#open-sites). | Nobody |
+
+In both of the first two modes only people holding a grant sign in. The difference is whether a scan
+by someone you have not added is a refusal or a request, so use invite only when you know exactly
+who the people are, and approval required when strangers should be able to ask.
+
+### Approval required
+
+The first scan is the registration, and approval is the gate behind it:
+
+1. A person scans the site's QR code, or taps the link on their phone. The bot replies *"Request
+   received. An administrator will review your request to join …, and I'll message you here once
+   you're approved."* A second scan says they are still waiting, and changes nothing else.
+2. Each super admin gets a message — *"Mallory (@mal) is asking to join The forum. Telegram id: …"* —
+   with a link to the site's queue. It goes out once per person, and at most five times per site per
+   hour: a sixth says more are arriving and that they are all in the console, and then it stops until
+   the hour is up. Set `adminUrl` in `createHub` for the link to use your own address; otherwise it uses
+   the address Telegram calls the webhook at.
+3. In the console, **Approve** grants access and the bot messages the person: *"You've been approved
+   for …. Open https://… and scan the sign-in QR code again."* They scan again and are signed in.
+   Granting someone's id from *People with access* while they have a request is the same thing: the
+   request goes and they are told. **Dismiss** forgets the request without telling anyone, and
+   **Block** refuses them from then on.
+
+If the bot cannot message someone (they have blocked it), the console says so and the approval still
+stands: tell them yourself.
+
+A request is only recorded for a QR that a site really minted and that is still pending, so
+messaging the bot made-up payloads leaves no trace. Requests are capped per site (100, newest kept).
+Switching a site to invite only hides its queue and stops recording; what was waiting is kept, and
+is there again if you switch back.
+
 ## Open sites
 
-A site normally lets in only people you grant access to. For a public site — a forum, say — you can
-instead let in **anyone with a Telegram account**. It is a setting on one site, and sites are
-approved-people-only until you change it.
+A site can also let in **anyone with a Telegram account**, for a public site such as a forum. It is a
+setting on one site, and sites are invite-only until you change it.
 
 ```js
 await registry.createNamespace({ namespace: "forum", name: "The forum", origins: ["https://forum.example.com"], access: "anyone" });
@@ -240,12 +280,12 @@ await registry.createNamespace({ namespace: "forum", name: "The forum", origins:
 What changes, and what does not:
 
 - **Anyone can sign in**, except people on the site's block list. The grant list stops being
-  consulted but is **kept**, so requiring approval again restores it exactly.
+  consulted but is **kept**, so going back restores it exactly.
 - **Opening a site takes a deliberate step.** The console asks you to type the site's id, and the
-  change is written to the audit log. Going back to approved-only needs no confirmation: narrowing
-  access is the safe direction, and people without a grant are locked out on their next request.
-- **There is no approval queue** on an open site — nobody to approve — and refused scans are not
-  recorded.
+  change is written to the audit log. Going back to invite only or approval needs no confirmation:
+  narrowing access is the safe direction, and people without a grant are locked out on their next
+  request.
+- **There is no approval queue** on an open site — nobody to approve — and scans are not recorded.
 - **A switched-off site stays off**, open or not.
 
 **An open site is responsible for its own accounts.** The hub only proves *who someone is*: a
@@ -303,17 +343,18 @@ ask for access.
   starts with nobody, and with nobody banned.
 - **Switching a site off keeps its grants.** Nobody can sign in, and open sessions fail on their next
   request; switching it back on restores everyone.
-- **Refused scans are remembered, but only for real QR codes, and only on sites that need grants.** A request is recorded only if the
+- **Only approval sites remember scans, and only real QR codes.** A request is recorded only if the
   scan carried a token that a site actually minted and is still pending; messaging the bot made-up
   payloads is refused without leaving a trace. Requests are capped per site (100, newest kept), so
-  the list cannot be flooded into growing without bound.
+  the list cannot be flooded into growing without bound. Invite-only and open sites record nothing.
 - **A registry outage is retryable, not a sign-out.** If the database cannot be read, sites answer
   `503` and the hub asks the person to scan again; nobody's cookie is cleared on the strength of an
   outage. Bootstrap admins can still reach the console.
-- **KV's consistency applies to the login store.** A scan can take an extra poll or two to reach the
-  site's browser, and two simultaneous scans of one QR are not strictly one-shot. Bind D1 or a
-  Durable Object as the login store if you need that guarantee (see README → *Storage*). The
-  registry is always D1, which is strongly consistent for its writes.
+- **Use D1 for the login store.** The hub's registry is D1 already, so `new D1LoginStore(env.HUB_DB)`
+  in the hub and in every site needs no extra resource, only the login table in the same database
+  (`migrations/d1.sql`). D1 is strongly consistent, so a scan reaches the site's browser on its next
+  poll and one scan is one sign-in. KV is eventually consistent: a confirmation can take tens of
+  seconds to appear at the site, which on a sign-in page is a long wait.
 - **Other bot features.** The hub owns the webhook, so a bot that also does other things should
   pass those updates through `onUnhandled`, or call `hub.handleUpdate(update)` from the framework
   that already owns the webhook — it resolves `true` for a sign-in and `false` for anything else.

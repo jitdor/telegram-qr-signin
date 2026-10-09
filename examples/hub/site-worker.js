@@ -9,17 +9,17 @@
 // Setup:
 //   wrangler secret put SESSION_SECRET      # this site's own; never shared with another site
 //   wrangler deploy
-// and bind the SAME KV namespace (LOGINS) and D1 database (HUB_DB) as the hub — see
-// site-wrangler.jsonc.
+// and bind the SAME D1 database (HUB_DB) as the hub — see site-wrangler.jsonc. It holds both the
+// registry and the login store.
 
-import { KVLoginStore, escapeHtml } from "telegram-qr-signin";
+import { D1LoginStore, escapeHtml } from "telegram-qr-signin";
 import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
 
 export default {
   async fetch(request, env) {
     const auth = createSiteAuth({
       botUsername: env.TELEGRAM_BOT_USERNAME, // the QR points at the bot; the bot token is not needed here
-      store: new KVLoginStore(env.LOGINS),
+      store: new D1LoginStore(env.HUB_DB), // the hub's login store: the same database
       registry: new D1HubStore(env.HUB_DB),
       session: { secret: env.SESSION_SECRET },
       branding: { title: "Docs — Sign in", heading: "📚 Internal docs" },

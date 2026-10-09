@@ -14,14 +14,10 @@
     // "QR_ORIGIN": "https://hub.example.com"
   },
 
-  "kv_namespaces": [
-    // In-flight sign-ins. The SAME namespace id in every site's wrangler config.
-    { "binding": "LOGINS", "id": "<from `wrangler kv namespace create LOGINS`>" }
-  ],
-
   "d1_databases": [
-    // The access list. The SAME database in every site's wrangler config. Apply
-    // migrations/hub-d1.sql once. Back it up: unlike the login store, this one is durable.
+    // The access list AND the login store (one table, telegram_qr_logins). The SAME database in every
+    // site's wrangler config. Apply migrations/hub-d1.sql and migrations/d1.sql once. Back up the
+    // access list: unlike the login rows, it is durable.
     { "binding": "HUB_DB", "database_name": "hub", "database_id": "<from `wrangler d1 create hub`>" }
   ],
 

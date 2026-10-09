@@ -15,11 +15,15 @@ export const MAX_NAME_LENGTH = 60;
 
 /**
  * Who a site lets in.
- *   "granted"  only people holding a grant (the default, and what every new site starts as)
- *   "anyone"   any Telegram account that is not blocked — the hub proves who someone is, and the
- *              site decides what they may do
+ *   "granted"   invite only: people holding a grant, and nobody else. A stranger is turned away and
+ *               told their Telegram id; nothing is recorded about them. The default for a new site.
+ *   "approval"  anyone may scan to register, then waits: the scan is recorded as a request, the
+ *               super admins are told, and the person is told when someone approves them. Only
+ *               people holding a grant sign in.
+ *   "anyone"    any Telegram account that is not blocked — the hub proves who someone is, and the
+ *               site decides what they may do
  */
-export const ACCESS_MODES = ["granted", "anyone"];
+export const ACCESS_MODES = ["granted", "approval", "anyone"];
 export const DEFAULT_ACCESS = "granted";
 
 /** Throws unless `mode` is one of ACCESS_MODES. */

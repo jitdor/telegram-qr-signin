@@ -41,7 +41,7 @@ export const SCOPE_DESCRIPTIONS = {
 export function renderConsentPage({ client, scopes, session, redirectUri, requestId, csrfToken, actionPath, branding: overrides = {}, fontsPath, site, origin }) {
   const branding = { ...DEFAULT_BRANDING, ...overrides };
   const callbackHost = hostOf(redirectUri ?? client.redirect_uris[0]);
-  const { host, name, letter } = resolveSite({ branding, site, origin });
+  const { host, name, letter, secure } = resolveSite({ branding, site, origin });
   const text = (key) => escapeHtml(branding[key]);
   const clientName = String(client.client_name);
 
@@ -84,7 +84,7 @@ ${pageHead({
 </head>
 <body>
   <div class="tqa-page">
-    ${topBar({ branding, name, letter, host })}
+    ${topBar({ branding, name, letter, host, secure })}
     <main class="tqa-stage">
       <h1 class="tqa-headline">
         <span class="tqa-hl">${text("consentHeading")}</span>

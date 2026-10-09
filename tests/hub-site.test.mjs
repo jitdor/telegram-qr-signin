@@ -349,7 +349,7 @@ test("a hub site's sign-in page names the site and shows its host", async () => 
   assert.match(html, /<span class="tqa-brand-name">Acme dashboard<\/span>/);
   assert.match(html, /<span class="tqa-mark" aria-hidden="true">A<\/span>/, "the mark is the first letter of the name");
   assert.match(html, /<p class="tqa-name"[^>]*>Acme dashboard<\/p>/);
-  assert.match(html, /<p class="tqa-site">acme\.example<\/p>/);
+  assert.match(html, /<span class="tqa-host">acme\.example<\/span>/);
   assert.match(html, /<dt>Destination<\/dt><dd>acme\.example<\/dd>/);
   assert.doesNotMatch(visible(html), /acme_|namespace/i, "the id itself is never shown as text");
 });
@@ -358,7 +358,7 @@ test("a port is part of the host shown, and each site names itself", async () =>
   const ctx = await setup();
   await ctx.registry.addOrigin("forum", "https://forum.example:8443");
   assert.match(await loginHtml(ctx.forum, FORUM), /<title>Sign in to The forum<\/title>/);
-  assert.match(await loginHtml(ctx.forum, "https://forum.example:8443"), /class="tqa-site">forum\.example:8443</);
+  assert.match(await loginHtml(ctx.forum, "https://forum.example:8443"), /<span class="tqa-host">forum\.example:8443</);
   assert.doesNotMatch(await loginHtml(ctx.acme, ACME), /The forum/);
 });
 
@@ -382,7 +382,7 @@ test("a heading the site sets itself is kept, with the host still shown", async 
   const site = makeSite(ctx, "acme", { branding: { heading: "📚 Internal docs" } });
   const html = await loginHtml(site, ACME);
   assert.match(html, /<span class="tqa-v tqa-v-wait">📚 Internal docs<\/span>/);
-  assert.match(html, /class="tqa-site">acme\.example</);
+  assert.match(html, /<span class="tqa-host">acme\.example</);
 });
 
 test("if the hub cannot name the site the page still shows, with the host alone", async () => {
@@ -395,7 +395,7 @@ test("if the hub cannot name the site the page still shows, with the host alone"
   const html = await loginHtml(site, ACME);
   // Without a name from the hub, the pass is named after the address it is served from.
   assert.match(html, /<span class="tqa-brand-name">Acme<\/span>/);
-  assert.match(html, /class="tqa-site">acme\.example</);
+  assert.match(html, /<span class="tqa-host">acme\.example</);
   assert.equal(errors.length, 1);
 });
 

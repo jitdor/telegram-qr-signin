@@ -443,7 +443,7 @@ The built-in page needs no styling to look right. It is laid out as a boarding p
 device it is opened on: a computer shows the QR and an "open it here" link; a phone leads with an
 **Open Telegram** button and keeps the QR behind "Signing in on another device?"; a tablet shows both,
 side by side when held sideways and stacked when upright. The pass carries the site's name in big
-letters, its first letter as the mark in the corner and the address it is served from top right and as
+letters, its first letter as the mark in the corner and the address it is served from top right (in a browser-style pill, with a lock on its own segment, which shows an open padlock instead when the page is known to be served over plain http) and as
 the destination, and spells out that no phone number or code is needed. Its status follows the
 sign-in (Awaiting scan, then Signed in with an ADMITTED stamp; Expired and Not allowed have their own
 endings. Its type is Archivo (headline and name), Inter and Google Sans Code (the small labels, hints and footnotes), all SIL OFL, bundled in

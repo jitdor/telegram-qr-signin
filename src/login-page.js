@@ -116,6 +116,9 @@ const ARROW_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 1
 const MASK_LOCK =
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='11' width='15' height='10' rx='2.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E")`;
 
+const MASK_UNLOCK =
+  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='11' width='15' height='10' rx='2.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 7.6-1.7'/%3E%3C/svg%3E")`;
+
 /** The first letter or digit of a name, upper-cased, or "" when it has none. */
 function firstLetter(name) {
   return String(name ?? "").match(/[\p{L}\p{N}]/u)?.[0]?.toUpperCase() ?? "";
@@ -207,7 +210,7 @@ function loginStyles(branding, fontsPath) {
     display: flex; flex-direction: column; width: min(100%, 47rem); min-height: 100vh; min-height: 100dvh; margin: 0 auto;
     padding: max(20px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
   }
-  .tqa-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
+  .tqa-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 14px; min-width: 0; }
   .tqa-brand { display: flex; align-items: center; gap: 12px; min-width: 0; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; }
   .tqa-brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tqa-mark {
@@ -215,11 +218,20 @@ function loginStyles(branding, fontsPath) {
     background: var(--tqa-ink); color: var(--tqa-accent); font: 900 1.5rem/1 var(--tqa-display);
   }
   .tqa-mark svg { width: 22px; height: 22px; fill: currentColor; }
-  .tqa-site { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font: 500 0.82rem/1.3 var(--tqa-mono); overflow-wrap: anywhere; text-align: right; }
-  .tqa-site::before {
-    content: ""; flex: none; width: 14px; height: 14px; background: currentColor;
+  /* The address, in the shape of a browser's address bar: a lock on its own segment, then the host. */
+  .tqa-site {
+    display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 0 auto; border-radius: 999px; overflow: hidden;
+    background: var(--tqa-ink); color: #fff; font: 500 0.74rem/1.2 var(--tqa-mono);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #fff 14%, transparent) inset;
+  }
+  .tqa-lock { flex: none; display: grid; place-items: center; width: 30px; border-right: 1px solid color-mix(in srgb, #fff 24%, transparent); }
+  .tqa-lock::before {
+    content: ""; width: 14px; height: 14px; background: #7ee2a8;
     -webkit-mask: ${MASK_LOCK} center / contain no-repeat; mask: ${MASK_LOCK} center / contain no-repeat;
   }
+  .tqa-site-open .tqa-lock::before { background: #ffc15e; -webkit-mask-image: ${MASK_UNLOCK}; mask-image: ${MASK_UNLOCK}; }
+  /* Lower-case text has its weight in the x-height, about a pixel below the middle of the line; the extra bottom padding lifts it to the middle of the pill. */
+  .tqa-host { min-width: 0; padding: 7.5px 12px 8.5px 10px; overflow-wrap: anywhere; }
   .tqa-stage { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(1.5rem, 5vh, 3.5rem) 0 1.5rem; }
   .tqa-headline {
     margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 11.4vw, 4rem)/0.94 var(--tqa-display);
@@ -426,7 +438,8 @@ function loginStyles(branding, fontsPath) {
 export function resolveSite({ branding, site, origin }) {
   const host = site?.host || hostOf(origin);
   const name = String(branding.siteName || site?.name || nameFromHost(host) || "").trim();
-  return { host, name, letter: firstLetter(name) };
+  // The lock claims a secure connection, so it only says so unless the page is known to be served over plain http.
+  return { host, name, letter: firstLetter(name), secure: !/^http:/i.test(String(origin ?? "")) };
 }
 
 /** The CSS scale that keeps a long name inside the ticket: 1 up to seven characters, smaller after. */
@@ -450,11 +463,11 @@ ${branding.headHtml}
 }
 
 /** The top bar: the site's mark and name on the left, the address it is served from on the right. */
-export function topBar({ branding, name, letter, host }) {
+export function topBar({ branding, name, letter, host, secure = true }) {
   const mark = branding.logoHtml || `<span class="tqa-mark" aria-hidden="true">${letter ? escapeHtml(letter) : PLANE_ICON}</span>`;
   return `<header class="tqa-top">
       <div class="tqa-brand">${mark}${name ? `<span class="tqa-brand-name">${escapeHtml(name)}</span>` : ""}</div>
-      ${host ? `<p class="tqa-site">${escapeHtml(host)}</p>` : ""}
+      ${host ? `<p class="tqa-site${secure ? "" : " tqa-site-open"}" title="${secure ? "Secure connection to" : "Not a secure connection to"} ${escapeHtml(host)}"><span class="tqa-lock" role="img" aria-label="${secure ? "Secure connection" : "Not secure"}"></span><span class="tqa-host">${escapeHtml(host)}</span></p>` : ""}
     </header>`;
 }
 
@@ -484,7 +497,7 @@ export function topBar({ branding, name, letter, host }) {
 export function renderLoginPage(params) {
   const branding = { ...DEFAULT_BRANDING, ...(params.branding ?? {}) };
   const site = params.site ?? null;
-  const { host, name, letter } = resolveSite({ branding, site, origin: params.origin });
+  const { host, name, letter, secure } = resolveSite({ branding, site, origin: params.origin });
   if (name && params.branding?.title === undefined) branding.title = `Sign in to ${name}`;
   const { token, deepLink, qrSvg, error, pollPath, pollIntervalMs = 2000, redirectTo = "/" } = params;
   const appLink = escapeHtml(params.appLink ?? appLinkFromDeepLink(deepLink));
@@ -510,7 +523,7 @@ ${branding.headHtml}
 </head>
 <body>
   <div class="tqa-page">
-    ${topBar({ branding, name, letter, host })}
+    ${topBar({ branding, name, letter, host, secure })}
     <main class="tqa-stage">
       <h1 class="tqa-headline">
         <span class="tqa-hl"><span class="tqa-v tqa-v-wait">${text("heading")}</span><span class="tqa-v tqa-v-ok">${text("approvedHeading")}</span><span class="tqa-v tqa-v-expired">${text("expiredHeading")}</span><span class="tqa-v tqa-v-denied">${text("deniedHeading")}</span></span>
@@ -598,8 +611,8 @@ export function renderScanEndedPage({ branding: overrides, fontsPath } = {}) {
  * @param {string} [params.origin]
  */
 export function renderEndedPage({ branding, fontsPath, title, text, pageTitle, extraHtml = "", site, origin }) {
-  const { host, name, letter } = site || origin ? resolveSite({ branding, site, origin }) : { host: "", name: "", letter: firstLetter(branding.siteName) };
-  const top = site || origin ? topBar({ branding, name, letter, host }) : branding.logoHtml ? `<header class="tqa-top"><div class="tqa-brand">${branding.logoHtml}</div></header>` : "";
+  const { host, name, letter, secure } = site || origin ? resolveSite({ branding, site, origin }) : { host: "", name: "", letter: firstLetter(branding.siteName), secure: true };
+  const top = site || origin ? topBar({ branding, name, letter, host, secure }) : branding.logoHtml ? `<header class="tqa-top"><div class="tqa-brand">${branding.logoHtml}</div></header>` : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

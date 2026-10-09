@@ -326,7 +326,7 @@ test("the sign-in page names the site and shows where it is served from, when it
   const html = renderLoginPage({ ...PAGE, site: { name: "Courier", host: "courier.jitdor.com" } });
   assert.match(html, /<title>Sign in to Courier<\/title>/);
   assert.match(html, /<div class="tqa-brand"><span class="tqa-mark" aria-hidden="true">C<\/span><span class="tqa-brand-name">Courier<\/span><\/div>/);
-  assert.match(html, /<p class="tqa-site">courier\.jitdor\.com<\/p>/);
+  assert.match(html, /<span class="tqa-host">courier\.jitdor\.com<\/span>/);
   assert.match(html, /<p class="tqa-name"[^>]*>Courier<\/p>/);
   assert.match(html, /<dt>Destination<\/dt><dd>courier\.jitdor\.com<\/dd>/);
   assert.match(visibleText(html), /Courier courier\.jitdor\.com/);
@@ -334,15 +334,15 @@ test("the sign-in page names the site and shows where it is served from, when it
 
 test("the pass is named from what the page knows: the site's name, branding.siteName, or the address it is served from", () => {
   const hostOnly = renderLoginPage({ ...PAGE, site: { host: "docs.example.com:8443" } });
-  assert.match(hostOnly, /class="tqa-site">docs\.example\.com:8443</);
+  assert.match(hostOnly, /<span class="tqa-host">docs\.example\.com:8443</);
   assert.match(hostOnly, /<span class="tqa-brand-name">Docs<\/span>/, "named after the first label of the host");
 
   const nameOnly = renderLoginPage({ ...PAGE, site: { name: "Docs" } });
   assert.match(nameOnly, /<title>Sign in to Docs<\/title>/);
-  assert.doesNotMatch(nameOnly, /tqa-site">/);
+  assert.doesNotMatch(nameOnly, /<span class="tqa-host">/);
 
   const fromOrigin = renderLoginPage({ ...PAGE, origin: "https://courier.jitdor.com" });
-  assert.match(fromOrigin, /class="tqa-site">courier\.jitdor\.com</, "a standalone app shows where it is served from");
+  assert.match(fromOrigin, /<span class="tqa-host">courier\.jitdor\.com</, "a standalone app shows where it is served from");
   assert.match(fromOrigin, /<span class="tqa-brand-name">Courier<\/span>/);
 
   const named = renderLoginPage({ ...PAGE, origin: "https://courier.jitdor.com", branding: { siteName: "Courier Ops" } });
@@ -359,12 +359,12 @@ test("a page that sets its own headline or title keeps them", () => {
   assert.match(html, /<span class="tqa-v tqa-v-wait">📈 Dashboard<\/span>/);
   assert.match(html, /<span class="tqa-h-scan">Scan me\.<\/span>/);
   assert.match(html, /<title>Acme<\/title>/);
-  assert.match(html, /class="tqa-site">docs\.example\.com</, "but the host is still shown");
+  assert.match(html, /<span class="tqa-host">docs\.example\.com</, "but the host is still shown");
 });
 
 test("without a site the page still reads as a pass, with the headline and no address", () => {
   const html = renderLoginPage(PAGE);
-  assert.doesNotMatch(html, /<p class="tqa-site">/);
+  assert.doesNotMatch(html, /<p class="tqa-site"/);
   assert.match(html, /<h1 class="tqa-headline">/);
   assert.match(visibleText(html), /Your pass is ready\. [^]*Scan it to sign in\. Tap to sign in\./);
   assert.match(html, /<title>Sign in<\/title>/);
@@ -525,4 +525,30 @@ test("branding.siteName wins over the name a hub supplies", () => {
   const html = renderLoginPage({ ...PAGE, site: { name: "Hub's name", host: "docs.example.com" }, branding: { siteName: "Mine" } });
   assert.match(html, /<span class="tqa-brand-name">Mine<\/span>/);
   assert.match(html, /<title>Sign in to Mine<\/title>/);
+});
+
+test("the address sits in a browser-style pill: a lock of its own, then the host, and it says so to a screen reader", () => {
+  const html = renderLoginPage({ ...PAGE, site: { name: "Courier", host: "courier.jitdor.com" }, origin: "https://courier.jitdor.com" });
+  assert.match(
+    html,
+    /<p class="tqa-site" title="Secure connection to courier\.jitdor\.com"><span class="tqa-lock" role="img" aria-label="Secure connection"><\/span><span class="tqa-host">courier\.jitdor\.com<\/span><\/p>/
+  );
+  assert.match(html, /\.tqa-site \{[^}]*background: var\(--tqa-ink\); color: #fff;/, "dark pill, white text");
+  assert.match(html, /\.tqa-lock \{[^}]*border-right: 1px solid/, "the lock is its own segment");
+});
+
+test("the lock only claims a secure connection unless the page is known to be served over plain http", () => {
+  const open = renderLoginPage({ ...PAGE, origin: "http://localhost:3000", site: { host: "localhost:3000" } });
+  assert.match(open, /<p class="tqa-site tqa-site-open" title="Not a secure connection to localhost:3000">/);
+  assert.match(open, /aria-label="Not secure"/);
+  assert.match(open, /\.tqa-site-open \.tqa-lock::before \{[^}]*mask-image/, "an open padlock");
+  assert.doesNotMatch(renderLoginPage({ ...PAGE, origin: "https://x.example" }), /tqa-site-open"/);
+  assert.doesNotMatch(renderLoginPage({ ...PAGE, site: { host: "x.example" } }), /tqa-site-open"/, "no origin: not accused of being insecure");
+});
+
+test("the consent and error pages carry the same pill", async () => {
+  const { renderConsentPage, renderErrorPage } = await import("../src/oidc/consent-page.js");
+  const consent = renderConsentPage({ client: { client_name: "A", redirect_uris: ["https://a.example/cb"] }, scopes: ["openid"], session: { name: "N" }, requestId: "r", csrfToken: "c", actionPath: "/consent", origin: "https://auth.example.com" });
+  assert.match(consent, /<span class="tqa-lock" role="img" aria-label="Secure connection"><\/span><span class="tqa-host">auth\.example\.com<\/span>/);
+  assert.match(renderErrorPage("x", "y", { origin: "http://auth.example.com" }), /tqa-site tqa-site-open/);
 });

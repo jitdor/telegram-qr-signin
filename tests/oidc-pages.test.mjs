@@ -42,7 +42,7 @@ test("the consent form still carries everything the provider checks", () => {
 test("the top bar names the provider and shows its address; the client is never mistaken for it", () => {
   const html = renderConsentPage({ ...PAGE, origin: "https://courier.jitdor.com" });
   assert.match(html, /<span class="tqa-brand-name">Courier<\/span>/);
-  assert.match(html, /<p class="tqa-site">courier\.jitdor\.com<\/p>/);
+  assert.match(html, /<span class="tqa-host">courier\.jitdor\.com<\/span>/);
   assert.match(html, /<span class="tqa-mark" aria-hidden="true">C<\/span>/);
   const named = renderConsentPage({ ...PAGE, origin: "https://courier.jitdor.com", branding: { siteName: "Acme ID" } });
   assert.match(named, /<span class="tqa-brand-name">Acme ID<\/span>/);
@@ -84,7 +84,7 @@ test("the error page is a pass that says what happened, with the code and the re
   assert.match(html, /<p class="tqa-ended-text">This sign-in expired\. Start again from the app\.<\/p>/);
   assert.match(html, /Error code: <code>invalid_request<\/code>/);
   assert.match(html, /Nothing was shared with the application that sent you here\./);
-  assert.match(html, /<p class="tqa-site">courier\.jitdor\.com<\/p>/);
+  assert.match(html, /<span class="tqa-host">courier\.jitdor\.com<\/span>/);
   assert.equal(fontUrls(html).length, 3);
   assert.match(html, /<meta name="robots" content="noindex, nofollow">/);
 });
@@ -94,7 +94,7 @@ test("the error page escapes what it is given and works with no options at all",
   const html = renderErrorPage(evil, evil);
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.doesNotMatch(html, /<p class="tqa-site">/, "nothing to say about the site");
+  assert.doesNotMatch(html, /<p class="tqa-site"/, "nothing to say about the site");
 });
 
 // --- Through the provider ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ test("through the provider, the consent screen names the provider's own address 
   const html = await response.text();
   assert.match(html, /<p class="tqa-name"[^>]*>App A<\/p>/);
   assert.match(html, /<span class="tqa-brand-name">Auth Hub<\/span>/);
-  assert.match(html, /<p class="tqa-site">auth\.example\.com<\/p>/);
+  assert.match(html, /<span class="tqa-host">auth\.example\.com<\/span>/);
   const fonts = fontUrls(html);
   assert.equal(fonts.length, 3);
   assert.ok(fonts.every((f) => f.startsWith(`${auth.paths.fonts}/`)));

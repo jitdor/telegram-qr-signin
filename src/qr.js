@@ -69,8 +69,10 @@ export function qrSvg(text, options = {}) {
     `<rect class="qr-eye" x="${(col + 2 + margin) * cellSize}" y="${(row + 2 + margin) * cellSize}" width="${cellSize * 3}" height="${cellSize * 3}" fill="${escapeXmlAttr(dark)}"/>`;
   const eyes = eyeAt(0, 0) + eyeAt(0, count - 7) + eyeAt(count - 7, 0);
 
+  // data-modules is how many modules the image is across, quiet zone included, so a page that scales
+  // it can keep each module a whole number of pixels (see .tqa-qr-link in login-page.js).
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" data-modules="${count + margin * 2}" ` +
     `shape-rendering="crispEdges" role="img" aria-label="${escapeXmlAttr(label)}">` +
     `<rect width="${size}" height="${size}" fill="${escapeXmlAttr(light)}"/>` +
     `<path d="${path}" fill="${escapeXmlAttr(dark)}"/>${eyes}</svg>`

@@ -36,6 +36,20 @@ test("qrSvg is styleable without breaking scannability", () => {
   assert.equal(Number(withMargin), Number(modules) + 12);
 });
 
+test("qrSvg says how many modules it is across, quiet zone included", () => {
+  const bare = Number(qrSvg(DEEP_LINK, { cellSize: 1, margin: 0 }).match(/viewBox="0 0 (\d+)/)[1]);
+  assert.match(qrSvg(DEEP_LINK), new RegExp(`data-modules="${bare + 8}"`));
+  assert.match(qrSvg(DEEP_LINK, { margin: 6 }), new RegExp(`data-modules="${bare + 12}"`));
+});
+
+test("the login page sizes the QR on whole pixels per module when the SVG gives its module count", () => {
+  const page = (svg) => renderLoginPage({ token: "0".repeat(32), deepLink: DEEP_LINK, qrSvg: svg, pollPath: "/auth/poll" });
+  const modules = qrSvg(DEEP_LINK).match(/data-modules="(\d+)"/)[1];
+  assert.match(page(qrSvg(DEEP_LINK)), new RegExp(`class="tqa-qr-link"[^>]*style="--tqa-qr-modules: ${modules}"`));
+  // A QR from elsewhere, without the count, keeps the plain size.
+  assert.doesNotMatch(page("<svg></svg>"), /--tqa-qr-modules: \d/);
+});
+
 test("qrSvg escapes anything interpolated into attributes", () => {
   const svg = qrSvg(DEEP_LINK, { label: '"><script>alert(1)</script>' });
   assert.equal(/<script>/.test(svg), false);

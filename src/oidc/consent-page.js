@@ -90,7 +90,7 @@ ${pageHead({
         <span class="tqa-hl">${text("consentHeading")}</span>
         <span class="tqa-hl">${escapeHtml(branding.consentSubheading).replace("{name}", escapeHtml(clientName))}</span>
       </h1>
-      <div class="tqa-ticket">
+      <div class="tqa-pass"><div class="tqa-ticket">
         <section class="tqa-main">
           <div class="tqa-kicker"><span>${text("consentKickerText")}</span><span>${text("viaText")}</span></div>
           <p class="tqa-name" style="--tqa-name-scale: ${nameScaleFor(clientName)}">${escapeHtml(clientName)}</p>
@@ -109,7 +109,7 @@ ${pageHead({
             <button class="tqa-ghost tqa-deny" type="submit" name="decision" value="deny">${text("denyText")}</button>
           </form>
         </aside>
-      </div>
+      </div></div>
     </main>
     <footer class="tqa-foot"><span class="tqa-foot-desk">${text("consentFootText")}</span></footer>
   </div>

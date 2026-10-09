@@ -170,7 +170,10 @@ export interface HubConfig {
    */
   store: LoginStore;
   registry: HubStore;
-  /** Bootstrap super admins — "111,222" or an array. At least one. Not removable from the console. */
+  /**
+   * Bootstrap super admins — "111,222" or an array. At least one. Not removable from the console.
+   * Name one with "111:Ada", and the console shows Ada instead of 111 wherever it says who did something.
+   */
   superAdmins: string | number | Array<string | number>;
   /** Signs the console's session cookie. Use a dedicated secret. */
   sessionSecret: string;
@@ -285,6 +288,8 @@ export declare function superAdminGate(options: {
   onError?: (err: unknown) => void;
 }): Gate;
 
+/** The names given to bootstrap admins ("111:Ada, 222" gives 111 -> "Ada"). */
+export declare function parseRootAdminNames(value: string | number | Array<string | number> | undefined): Map<number, string>;
 export declare function parseRootAdmins(value: string | number | Array<string | number> | undefined): number[];
 
 export declare const ADMIN_NAMESPACE: "hub-admin";

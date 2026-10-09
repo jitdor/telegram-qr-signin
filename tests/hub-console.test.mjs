@@ -413,6 +413,42 @@ test("adding a super admin lets them in; removing them shuts the door again", as
   assert.deepEqual((await ctx.registry.listAudit()).map((e) => e.action).slice(0, 2), ["admin.remove", "admin.add"]);
 });
 
+test("the activity log and \"added by\" show an admin's name, with the number only as a fallback", async () => {
+  const ctx = makeHub({ config: { superAdmins: `${ROOT.id}:Rhea Boss` } });
+  ctx.cookie = await signInToConsole(ctx.hub, ROOT);
+  await post(ctx.hub, "/admin/admins", { id: String(ADMIN2.id), label: "Ada" }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  await post(ctx.hub, "/admin/ns/acme/grants", { ids: String(ALICE.id) }, { cookie: ctx.cookie });
+
+  const adaCookie = await signInToConsole(ctx.hub, ADMIN2);
+  await post(ctx.hub, "/admin/ns/acme/blocks", { ids: String(MALLORY.id) }, { cookie: adaCookie });
+
+  const dashboard = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
+  assert.match(dashboard, /by <span title="Telegram id 1000">Rhea Boss<\/span>/, "a bootstrap admin's configured name");
+  assert.match(dashboard, /by <span title="Telegram id 2000">Ada<\/span>/, "an admin added in the console, by the name they were given");
+  assert.doesNotMatch(dashboard, /by <code>(1000|2000)<\/code>/);
+
+  const site = await (await get(ctx.hub, "/admin/ns/acme", ctx.cookie)).text();
+  assert.match(site, /by <span title="Telegram id 1000">Rhea Boss<\/span>/);
+  assert.match(site, /by <span title="Telegram id 2000">Ada<\/span>/);
+
+  // Removed, an admin has no name to show, so the number is all that is left.
+  await post(ctx.hub, `/admin/admins/${ADMIN2.id}/remove`, {}, { cookie: ctx.cookie });
+  assert.match(await (await get(ctx.hub, "/admin", ctx.cookie)).text(), /by <code>2000<\/code>/);
+});
+
+test("a name from configuration is escaped, and an unnamed bootstrap admin still shows as a number", async () => {
+  const ctx = makeHub({ config: { superAdmins: `${ROOT.id}:<b>x</b>` } });
+  ctx.cookie = await signInToConsole(ctx.hub, ROOT);
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  const html = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
+  assert.ok(!html.includes("<b>x</b>") && html.includes("&lt;b&gt;x&lt;/b&gt;"));
+
+  const plain = await setup();
+  await post(plain.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: plain.cookie });
+  assert.match(await (await get(plain.hub, "/admin", plain.cookie)).text(), /by <code>1000<\/code>/);
+});
+
 test("a super admin does not get into any site just by being one", async () => {
   const ctx = await setup();
   await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });

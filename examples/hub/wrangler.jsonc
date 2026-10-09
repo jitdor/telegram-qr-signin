@@ -9,7 +9,8 @@
     "TELEGRAM_BOT_USERNAME": "your_bot",
 
     // Telegram numeric user ids of the people who can always get into the console. Find yours by
-    // messaging @userinfobot. At least one is required.
+    // messaging @userinfobot. At least one is required. Add ":Name" to put a name to an id, so the
+    // console's activity log says "Kenny" and not a number: "123456789:Kenny,987654321:Ada".
     "SUPER_ADMINS": "123456789"
     // "QR_ORIGIN": "https://hub.example.com"
   },

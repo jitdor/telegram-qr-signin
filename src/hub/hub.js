@@ -20,7 +20,7 @@ import { createTelegramQrAuth } from "../provider.js";
 import { createStartHandler, createUpdateEndpoint } from "../bot.js";
 import { TelegramClient } from "../telegram.js";
 import { tokenPattern } from "../crypto.js";
-import { hubGate, superAdminGate, parseRootAdmins } from "./gates.js";
+import { hubGate, superAdminGate, parseRootAdmins, parseRootAdminNames } from "./gates.js";
 import { createAdminConsole } from "./console.js";
 import { createHubApi } from "./api.js";
 import { ADMIN_NAMESPACE, NAMESPACE_RE, cleanName, describeUser } from "./validate.js";
@@ -42,7 +42,8 @@ const REQUEST_NOTICES_PER_HOUR = 5;
  * @param {object} config.registry         A HubStore — `new D1HubStore(env.HUB_DB)`.
  * @param {string|number|Array<string|number>} config.superAdmins
  *   Bootstrap super admins, as "111,222" or an array. At least one is required, and they cannot be
- *   removed from the console — that is what makes locking yourself out impossible.
+ *   removed from the console — that is what makes locking yourself out impossible. Give one a name
+ *   with "111:Ada" and the console shows Ada, not 111, wherever it says who did something.
  * @param {string} config.sessionSecret    Signs the console's session cookie. Use a dedicated secret.
  * @param {string} [config.webhookSecret]  The `secret_token` given to setWebhook. Set it.
  * @param {string} [config.webhookPath="/telegram/webhook"]
@@ -93,6 +94,7 @@ export function createHub(config) {
     throw new Error("createHub: `webhookPath`, `adminPath` and `apiPath` must not overlap");
   }
   const rootAdmins = parseRootAdmins(superAdmins);
+  const rootNames = parseRootAdminNames(superAdmins);
   if (!rootAdmins.length) {
     throw new Error("createHub: `superAdmins` needs at least one Telegram user id — it is how you get into the console the first time");
   }
@@ -132,6 +134,7 @@ export function createHub(config) {
     auth: adminAuth,
     registry,
     rootAdmins,
+    rootNames,
     adminPath,
     apiPath,
     secret: sessionSecret,

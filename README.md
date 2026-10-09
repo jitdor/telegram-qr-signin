@@ -92,24 +92,25 @@ the store is injected rather than in-process.
 
 ## Install
 
-Not on npm — install straight from GitHub:
+Not on npm — install straight from GitHub. Releases are git tags (`v1.0.0`, `v1.1.0`, …), and npm
+resolves a semver range against them:
 
 ```bash
-npm install github:jitdor/telegram-qr-signin
+npm install github:jitdor/telegram-qr-signin#semver:^1.0.0
 ```
 
-This tracks `main`, which is the supported version — there are no release tags to pin. npm records
-the exact commit it fetched in your lockfile, so **commit `package-lock.json`**: installs stay
+`^1.0.0` takes any 1.x release and never a breaking 2.0. Pin an exact release with `#v1.0.0`, or
+track the unreleased tip of `main` with plain `github:jitdor/telegram-qr-signin`. npm records the
+exact commit it fetched in your lockfile, so **commit `package-lock.json`**: installs stay
 reproducible, and you only move when you choose to:
 
 ```bash
-npm update telegram-qr-signin      # fetch the latest main and record the new commit
+npm update telegram-qr-signin      # fetch the newest release inside your range
 ```
 
-**Knowing when there is an update.** There is no version number to watch. Follow the commit feed
-(`https://github.com/jitdor/telegram-qr-signin/commits/main.atom`) in a feed reader, or use
-GitHub's **Watch → Custom** on the repo. Changes that alter behaviour are called out in the commit
-message and the pull request title, so skim those before running `npm update`.
+**Knowing when there is an update.** Watch the releases: `https://github.com/jitdor/telegram-qr-signin/tags.atom`
+in a feed reader, or GitHub's **Watch → Custom → Releases** on the repo. Breaking changes only ever
+arrive in a new major version.
 
 It lands in `node_modules/telegram-qr-signin` and imports by that name either way. Vendoring the
 `src/` directory into your own repo is also a legitimate option: it is nine dependency-free ESM
@@ -896,9 +897,8 @@ node --test tests/*.test.mjs
 No network, no wrangler, no D1 emulator: the D1 tests run real SQLite (`node:sqlite`) against the
 real migration file, so the SQL that makes `confirm` single-use is actually exercised.
 
-There are no releases: `main` is the version. `version` in `package.json` stays at `0.6.2` for
-good (npm wants the field to exist, and there is no matching tag). Don't bump it; put behaviour
-changes in the commit message and pull request title instead.
+Releases follow semver. To cut one: set `version` in `package.json`, commit, tag the commit
+`v<version>` and push the tag. npm resolves `#semver:` ranges against those tags.
 
 ---
 

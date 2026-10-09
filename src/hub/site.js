@@ -1,22 +1,22 @@
-// The site side of a hub: createTelegramQrAuth with the hub's gate already wired in.
+// The site side of a hub: createTelegramQrAuth, with the hub in place of every piece of shared state.
 //
-// A site registered in the hub's console needs almost nothing of its own: the shared login store,
-// the registry, and a session secret. It does NOT need the bot token — the hub's webhook is what
-// talks to Telegram — so a compromised site cannot impersonate the bot.
+// A site holds one thing from the hub, its KEY. It has no database binding, no share of the login
+// store, no copy of the access list, and no bot token. Starting a sign-in, finding out who scanned,
+// and "may this person come in" are all questions it puts to the hub over HTTPS, and the hub answers
+// yes or no. The hub is the single authority: if it is down, nobody signs in to any site, and nobody
+// is signed out (see `transient` below).
 //
-// It also does not need to say which site it is. Leave `namespace` out and the site works that out
-// from the URL each request arrives at, by looking that origin up in the registry. The id then comes
-// from the one thing a Worker cannot misreport — where it was actually reached — instead of from a
-// string in its code that has to be kept in step with the console. Pass `namespace` to pin it
-// instead, which skips that lookup.
+// Because it is only HTTPS and JSON, a site can run anywhere — it need not be on Cloudflare.
 
 import { createTelegramQrAuth, jsonResponse } from "../provider.js";
 import { renderLoginPage as defaultRenderLoginPage } from "../login-page.js";
 import { every } from "../gates.js";
-import { hubGate } from "./gates.js";
-import { assertSiteNamespace, originOfRequest } from "./validate.js";
+import { createHubClient, HubError, HubLoginStore } from "./client.js";
 
-// Stands in for a Telegram client the site never uses. If something does reach for it (a
+export { HubError };
+import { originOfRequest } from "./validate.js";
+
+// Stands in for a Telegram client the site never has. If something does reach for it (a
 // chatMember gate composed in via `authorize`, say) it fails loudly, naming the fix.
 const NO_TELEGRAM = {
   async call() {
@@ -24,214 +24,190 @@ const NO_TELEGRAM = {
   },
 };
 
-// The cookie's name cannot depend on the namespace when the namespace is not known until a request
-// arrives. Cookies are per-origin, so one fixed name cannot collide between sites.
-const DEFAULT_COOKIE_NAME = "site_session";
-
-// Any valid id: used only to build the namespace-independent members of a resolving site.
-const TEMPLATE_NAMESPACE = "site";
+// How long the sign-in page remembers the site's display name before asking the hub again.
+const SITE_INFO_TTL_MS = 30_000;
+// Most results the check cache holds; it is only a few seconds deep.
+const MAX_CACHED_CHECKS = 1000;
 
 /**
- * @param {object} config  Everything createTelegramQrAuth takes, plus:
- * @param {object} config.registry   A HubStore (D1HubStore on Workers).
- * @param {string} [config.namespace]  The id this site was registered under. Leave it out and the
- *   site resolves it from the request's origin on every request (one extra registry query), which
- *   is what you want. Pass it to pin the site and skip that query; the request's origin must still
- *   be one of that namespace's registered URLs. Either way the URL is registered in the console,
- *   to exactly one site.
- * @param {object} config.session    `{ secret }` is required: unlike a standalone app there is no
- *   bot token to default to. Give each site its own, so one site's cookies are worthless on another.
- * @param {Function} [config.authorize]  Optional extra gate, ANDed with the hub's — e.g. also
- *   require `chatMember(...)`. Needs `botToken` or `telegram`.
- * @param {boolean|(() => boolean)} [config.recordRequests]  See hubGate.
- * @param {(err: unknown) => void} [config.onError]  Registry failures. Defaults to console.error.
+ * @param {object} config  Everything createTelegramQrAuth takes except `store`, `namespace` and the
+ *   Telegram options, plus:
+ * @param {object} config.hub
+ * @param {string} config.hub.url   The hub's API address, as the console shows it: "https://auth.example.com/hub-api".
+ * @param {string} config.hub.key   This site's key, made in the console. Keep it in a secret.
+ * @param {typeof fetch} [config.hub.fetch]  Replaces global fetch (a service binding's, a test double).
+ * @param {number} [config.hub.timeoutMs=5000]
+ * @param {number} [config.hub.checkCacheSeconds=0]  How long a "yes" from the hub is reused for the
+ *   same person. 0 asks on every request, so revoking someone in the console takes effect on their
+ *   very next request; raise it to trade that for fewer calls to the hub.
+ * @param {object} config.session    `{ secret }` is required, and different for every site, so one
+ *   site's cookies are worthless on another.
+ * @param {Function} [config.authorize]  Optional extra gate, ANDed with the hub's — e.g. also require
+ *   `chatMember(...)`. Needs `botToken` or `telegram`.
+ * @param {(err: unknown) => void} [config.onError]  Hub failures. Defaults to console.error.
  *
- * The site is served from the URL(s) registered for its namespace in the console. Visitors reaching
- * it at any other origin are refused, and so is a scan of a QR minted anywhere else.
+ * The site is served from the URL(s) registered for it in the console. A QR minted at any other
+ * address is refused by the hub.
  */
 export function createSiteAuth(config) {
-  return config?.namespace === undefined ? createResolvingSiteAuth(config) : createPinnedSiteAuth(config);
-}
+  const { hub: hubConfig, authorize, botToken, telegram, onError = defaultOnError, renderLoginPage: customRender, ...rest } = config ?? {};
 
-/** A site that was told its namespace. */
-function createPinnedSiteAuth(config) {
-  const { registry, namespace, authorize, recordRequests, botToken, telegram, onError, ...rest } = config ?? {};
-  if (!registry) throw new Error("createSiteAuth: `registry` is required");
-  assertSiteNamespace(namespace);
+  for (const gone of ["registry", "store", "namespace", "recordRequests"]) {
+    if (config?.[gone] !== undefined) {
+      throw new Error(
+        `createSiteAuth: \`${gone}\` is no longer an option. A site does not touch the hub's data any more: pass \`hub: { url, key }\` instead (the key says which site this is). See docs/hub.md.`
+      );
+    }
+  }
+  if (!hubConfig) throw new Error("createSiteAuth: `hub` is required, as { url, key } — both come from the hub's console");
   if (!rest.session?.secret) {
     throw new Error("createSiteAuth: `session.secret` is required — a site has no bot token to fall back on");
   }
-
-  // The hub binds a namespace to its site by the origin recorded when each QR is minted, so a site
+  // The hub binds a site to its URLs by the origin recorded when each QR is minted, so a site
   // cannot opt out of recording it.
   if (rest.captureClient === false) {
     throw new Error("createSiteAuth: `captureClient` cannot be turned off — the hub uses it to check which site a QR came from");
   }
 
-  const hub = hubGate({ registry, namespace, recordRequests, onError });
+  const { checkCacheSeconds = 0, ...clientOptions } = hubConfig;
+  const client = createHubClient(clientOptions);
 
-  // The sign-in page says which site it is and where it is served from, so a person who ends up on
-  // the wrong environment, or the wrong site, can see it before they scan. The name is read from the
-  // registry each time (an admin may rename the site); if that fails the page still renders, with the
-  // host alone. It is self-reported by the page, so it helps people orient, not defend: the bot's
-  // message is the check that cannot be faked by a page.
-  const render = rest.renderLoginPage ?? defaultRenderLoginPage;
-  const renderLoginPage = async (params) => {
-    let name;
+  // --- "May this person be signed in to this site, right now?" ---------------------------------
+
+  const cache = new Map(); // `${id}|${stage}|${origin}` -> expiry (ms); only "yes" is ever kept
+  const hubGate = async (user, ctx = {}) => {
+    // The bot's confirmation happens at the hub. A site is only ever asked at poll time, or per request.
+    if (ctx.stage !== "poll" && ctx.stage !== "session") return { ok: false, reason: "not_supported" };
+    const origin = ctx.request ? originOfRequest(ctx.request) ?? "" : "";
+    const cacheKey = `${user.id}|${ctx.stage}|${origin}`;
+    if (checkCacheSeconds > 0 && (cache.get(cacheKey) ?? 0) > Date.now()) return true;
+
+    let answer;
     try {
-      name = (await registry.getNamespace(namespace))?.name;
+      answer = await client.check({ user: { id: user.id, username: user.username }, stage: ctx.stage, origin });
     } catch (err) {
-      (onError ?? defaultOnError)(err);
+      if (!(err instanceof HubError)) throw err;
+      onError(err);
+      // The hub being unreachable, or this site's key being wrong, says nothing about this person:
+      // answer "try again", which never signs anyone out.
+      return { ok: false, reason: err.transient ? "hub_unavailable" : err.code, transient: err.transient };
     }
+    if (answer.ok) {
+      if (checkCacheSeconds > 0) {
+        if (cache.size >= MAX_CACHED_CHECKS) cache.clear();
+        cache.set(cacheKey, Date.now() + checkCacheSeconds * 1000);
+      }
+      return true;
+    }
+    return { ok: false, reason: answer.reason ?? "refused" };
+  };
+
+  // --- The sign-in page says which site it is --------------------------------------------------
+
+  // The name is read from the hub (an admin may rename the site) and remembered for a moment. If the
+  // hub cannot be asked the page still renders, with the host alone. It is self-reported by the page,
+  // so it helps people orient, not defend: the bot's message is the check a page cannot fake.
+  const render = customRender ?? defaultRenderLoginPage;
+  let info = { name: undefined, until: 0 };
+  async function siteName() {
+    if (info.until > Date.now()) return info.name;
+    try {
+      info = { name: (await client.site()).name, until: Date.now() + SITE_INFO_TTL_MS };
+    } catch (err) {
+      onError(err);
+      return info.name;
+    }
+    return info.name;
+  }
+  const renderLoginPage = async (params) => {
     let host;
     try {
       host = params.origin ? new URL(params.origin).host : undefined;
     } catch {
       host = undefined;
     }
-    return render({ ...params, site: { name, host } });
+    return render({ ...params, site: { name: await siteName(), host } });
   };
 
-  return createTelegramQrAuth({
+  const auth = createTelegramQrAuth({
     ...rest,
     renderLoginPage,
-    namespace,
+    namespace: client.namespace,
+    store: new HubLoginStore(client),
     botToken,
     telegram: telegram ?? (botToken ? undefined : NO_TELEGRAM),
-    authorize: authorize ? every(hub, authorize) : hub,
+    authorize: authorize ? every(hubGate, authorize) : hubGate,
   });
-}
 
-/**
- * A site that finds its namespace from the request. It wraps one pinned auth per namespace it has
- * seen (building one is only closures) and sends each request to the right one.
- */
-function createResolvingSiteAuth(config) {
-  if (!config?.registry) throw new Error("createSiteAuth: `registry` is required");
-  const { registry, onError = defaultOnError } = config;
-  const shared = { ...config, session: { ...config.session, cookieName: config.session?.cookieName ?? DEFAULT_COOKIE_NAME } };
+  // --- When the hub cannot answer ----------------------------------------------------------------
 
-  // Validates the whole config once, and supplies everything that does not depend on the namespace.
-  const template = createPinnedSiteAuth({ ...shared, namespace: TEMPLATE_NAMESPACE });
-  const { paths } = template;
-
-  const bound = new Map();
-  function authFor(namespace) {
-    let auth = bound.get(namespace);
-    if (!auth) bound.set(namespace, (auth = createPinnedSiteAuth({ ...shared, namespace })));
-    return auth;
-  }
-
-  /**
-   * The namespace this request's origin is registered to, and the auth for it. Not found, found
-   * twice (two sites claim the URL: refuse rather than guess), and "could not ask" are three
-   * different answers, and the last is retryable rather than a refusal.
-   */
-  async function resolve(request) {
-    const origin = request ? originOfRequest(request) : null;
-    let matches = [];
-    if (origin) {
-      try {
-        matches = await registry.namespacesForOrigin(origin);
-      } catch (err) {
-        onError(err);
-        return { ok: false, reason: "hub_unavailable", transient: true };
-      }
-    }
-    if (matches.length === 0) return { ok: false, reason: "origin_not_allowed" };
-    if (matches.length > 1) return { ok: false, reason: "origin_ambiguous" };
-    return { ok: true, namespace: matches[0], auth: authFor(matches[0]) };
-  }
-
-  /** The response for a request that could not be matched to a site. */
-  function refusal(result) {
+  /** The page for a visitor when the hub could not do what the site asked, or null if `err` is not the hub's. */
+  function refusalFor(err) {
+    if (!(err instanceof HubError)) return null;
     const headers = { "Content-Type": "text/plain; charset=UTF-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
-    if (result.transient) {
-      return new Response("Temporarily unable to verify this site. Please try again shortly.", { status: 503, headers: { ...headers, "Retry-After": "5" } });
+    if (err.code === "origin_not_allowed") {
+      return new Response("This address is not registered for this site. An administrator can add it in the hub console.", { status: 403, headers });
     }
-    return new Response(
-      result.reason === "origin_ambiguous"
-        ? "This address is registered to more than one site. An administrator needs to fix that in the hub console."
-        : "This address is not registered as a site. An administrator can add it in the hub console.",
-      { status: 403, headers }
-    );
+    if (err.code === "namespace_disabled") {
+      return new Response("Sign-in for this site is switched off.", { status: 403, headers });
+    }
+    onError(err);
+    // An operator's problem (the hub is down, the key is wrong), not something to tell a visitor
+    // about; they are asked to try again.
+    return new Response("Sign-in is temporarily unavailable. Please try again shortly.", { status: 503, headers: { ...headers, "Retry-After": "5" } });
   }
 
-  function mustResolve(result) {
-    if (!result.ok) throw new Error(`createSiteAuth: this request's origin is not a registered site (${result.reason})`);
-    return result.auth;
+  async function guarded(fn) {
+    try {
+      return await fn();
+    } catch (err) {
+      const response = refusalFor(err);
+      if (!response) throw err;
+      return response;
+    }
   }
-
-  const ownsPath = (pathname) =>
-    pathname === paths.poll || pathname === paths.login || pathname === paths.logout || pathname === paths.qr || pathname.startsWith(`${paths.scan}/`);
 
   return {
-    // What does not depend on which site a request is for.
-    basePath: template.basePath,
-    paths,
-    cookieName: template.cookieName,
-    tokenTtlSeconds: template.tokenTtlSeconds,
-    getSession: template.getSession,
-    verifyAssertion: template.verifyAssertion,
-    logoutResponse: template.logoutResponse,
-    store: template.store,
-    telegram: template.telegram,
-    session: template.session,
+    ...auth,
 
-    /** The namespace a request's origin is registered to, or null. For apps that key their own data per site. */
-    async namespaceFor(request) {
-      const result = await resolve(request);
-      return result.ok ? result.namespace : null;
-    },
-
-    async handle(request) {
+    handle: async (request) => {
       const { pathname } = new URL(request.url);
-      if (!ownsPath(pathname)) return null;
-      if (pathname === paths.logout) return template.handle(request); // clearing a cookie needs no site
-      const result = await resolve(request);
-      if (!result.ok) {
-        return pathname === paths.poll ? jsonResponse({ status: "denied", reason: result.reason }, result.transient ? 503 : 403) : refusal(result);
+      if (pathname === auth.paths.poll) return auth.poll(request); // answers in JSON, below
+      return guarded(() => auth.handle(request));
+    },
+
+    // The page polls this. It keeps polling through an answer it does not recognise, so "unavailable" waits and retries.
+    poll: async (request) => {
+      try {
+        return await auth.poll(request);
+      } catch (err) {
+        if (!(err instanceof HubError)) throw err;
+        if (err.code === "origin_not_allowed" || err.code === "namespace_disabled") return jsonResponse({ status: "denied", reason: err.code }, 403);
+        onError(err);
+        return jsonResponse({ status: "unavailable", reason: "hub_unavailable" }, 503, new Headers({ "Retry-After": "5" }));
       }
-      return result.auth.handle(request);
     },
 
-    async guard(request, options) {
-      const result = await resolve(request);
-      if (!result.ok) return { ok: false, reason: result.reason, response: refusal(result) };
-      return result.auth.guard(request, options);
+    guard: async (request, options) => {
+      try {
+        return await auth.guard(request, options);
+      } catch (err) {
+        const response = refusalFor(err);
+        if (!response) throw err;
+        return { ok: false, reason: err.code === "origin_not_allowed" || err.code === "namespace_disabled" ? err.code : "hub_unavailable", response };
+      }
     },
 
-    async poll(request) {
-      const result = await resolve(request);
-      if (!result.ok) return jsonResponse({ status: "denied", reason: result.reason }, result.transient ? 503 : 403);
-      return result.auth.poll(request);
-    },
+    scan: (request) => guarded(() => auth.scan(request)),
+    loginResponse: (options) => guarded(() => auth.loginResponse(options)),
 
-    async scan(request) {
-      const result = await resolve(request);
-      return result.ok ? result.auth.scan(request) : refusal(result);
-    },
-
-    // These need the request to know which site they are for.
-    async beginLogin(options = {}) {
-      return mustResolve(await resolve(options.request)).beginLogin(options);
-    },
-    async loginPage(options = {}) {
-      return mustResolve(await resolve(options.request)).loginPage(options);
-    },
-    async loginResponse(options = {}) {
-      const result = await resolve(options.request);
-      return result.ok ? result.auth.loginResponse(options) : refusal(result);
-    },
-
-    /** The hub's check for a user, for the site the request in `ctx` is for. Without a request there is no site to check. */
-    async authorize(user, ctx = {}) {
-      const result = await resolve(ctx.request);
-      return result.ok ? result.auth.authorize(user, ctx) : { ok: false, reason: result.reason, ...(result.transient ? { transient: true } : {}) };
-    },
+    /** The site's own moderation, for a site open to anyone: refuse this person from now on. Only this site's list. */
+    block: (id, label) => client.block(id, label),
+    /** Undo `block`. */
+    unblock: (id) => client.unblock(id),
   };
 }
 
 function defaultOnError(err) {
-  console.error("telegram-qr-signin/hub: registry error", err);
+  console.error("telegram-qr-signin/hub: hub error", err);
 }

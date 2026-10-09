@@ -212,21 +212,39 @@ test("a signed-out POST changes nothing and just shows the sign-in page", async 
 test("adding a site registers it, audits it, and lands on its page", async () => {
   const ctx = await setup();
   const response = await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example", name: "Acme dashboard" }, { cookie: ctx.cookie });
-  const { target, html, status } = await follow(ctx, response);
 
-  assert.equal(target.pathname, "/admin/ns/acme");
-  assert.equal(status, 200);
-  assert.match(html, /Acme dashboard/);
-  assert.match(html, /Site added/);
+  // The response IS the page that shows the new site's key, once: not a redirect, so the key is never in a URL.
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Location"), null);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  const html = await response.text();
+  assert.match(html, /Site added: here is its key/);
+  assert.match(html, /only time the key is shown/);
+  const key = html.match(/tqk_acme_[0-9a-f]{64}/)?.[0];
+  assert.ok(key, "the key is on the page");
+
   const site = await ctx.registry.getNamespace("acme");
   assert.deepEqual([site.name, site.enabled, site.createdBy], ["Acme dashboard", true, ROOT.id]);
-  const [entry] = await ctx.registry.listAudit();
-  assert.deepEqual([entry.actor, entry.action, entry.target], [ROOT.id, "site.create", "acme"]);
+  const stored = await ctx.registry.getSiteKey("acme");
+  assert.ok(stored.hash && !stored.hash.includes(key) && stored.hash !== key, "the registry keeps a hash, never the key");
+
+  const [keyEntry, createEntry] = await ctx.registry.listAudit();
+  assert.deepEqual([createEntry.actor, createEntry.action, createEntry.target], [ROOT.id, "site.create", "acme"]);
+  assert.deepEqual([keyEntry.action, keyEntry.target], ["site.key", "acme"]);
+  assert.ok(!JSON.stringify(await ctx.registry.listAudit()).includes(key), "the key is never written to the audit log");
+
+  // Reloading the site's page does not show it again.
+  const page = await (await get(ctx.hub, "/admin/ns/acme", ctx.cookie)).text();
+  assert.doesNotMatch(page, /tqk_acme_[0-9a-f]{64}/);
+  assert.match(page, /Site key <span class="pill on">Set<\/span>/);
 });
 
 test("site ids are validated: shape, the reserved console id, and duplicates", async () => {
   const ctx = await setup();
-  const err = async (namespace) => redirectTarget(await post(ctx.hub, "/admin/ns", { namespace, url: "https://x.example" }, { cookie: ctx.cookie })).searchParams.get("err");
+  const err = async (namespace) => {
+    const response = await post(ctx.hub, "/admin/ns", { namespace, url: "https://x.example" }, { cookie: ctx.cookie });
+    return response.status === 200 ? null : redirectTarget(response).searchParams.get("err"); // 200 is the page showing the new key
+  };
 
   for (const bad of ["", "has_underscore", "x".repeat(25), "sp ace", "a/b", "../x", "<script>"]) {
     assert.equal(await err(bad), "bad_namespace", JSON.stringify(bad));
@@ -514,7 +532,7 @@ test("an audit-log failure does not undo or hide the change that was made", asyn
     throw new Error("audit table gone");
   };
   const response = await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
-  assert.equal(redirectTarget(response).searchParams.get("ok"), "site_created");
+  assert.equal(response.status, 200, "the site is made and its key shown, whether or not the log could be written");
   assert.ok(await ctx.registry.getNamespace("acme"));
 });
 
@@ -758,7 +776,7 @@ test("the URL is stored as an origin: path, case and default port are dropped; l
   await post(ctx.hub, "/admin/ns", { namespace: "dev", name: "Dev", url: "http://localhost:8787/" }, { cookie: ctx.cookie });
   assert.deepEqual((await ctx.registry.getNamespace("acme")).origins, ["https://acme.example.com"]);
   assert.deepEqual((await ctx.registry.getNamespace("dev")).origins, ["http://localhost:8787"]);
-  const entry = (await ctx.registry.listAudit()).find((e) => e.target === "acme");
+  const entry = (await ctx.registry.listAudit()).find((e) => e.target === "acme" && e.action === "site.create");
   assert.match(entry.detail, /https:\/\/acme\.example\.com/, "the audit log records the bound URL");
 });
 
@@ -842,10 +860,8 @@ test("end to end: a site added in the console works from its URL and from nowher
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start docs_${real.token}`, ALICE)));
   assert.equal((await ctx.store.get(real.token, "docs")).status, "confirmed");
 
-  const fake = await login(docs, "https://not-docs.example");
-  await ctx.hub.webhook(webhookRequest(startUpdate(`/start docs_${fake.token}`, ALICE)));
-  assert.match(lastReply(ctx.telegram), /isn't registered for Docs/);
-  assert.equal((await ctx.store.get(fake.token, "docs")).status, "pending");
+  // From any other address the hub will not even start a sign-in.
+  await assert.rejects(login(docs, "https://not-docs.example"), (err) => err.code === "origin_not_allowed");
 });
 
 // --- Adding a site in two steps, with a suggested id the admin can change -----------------------
@@ -896,7 +912,8 @@ test("the admin can rename the suggestion before saving, and the id they chose i
 
   // What the browser submits after the admin changes the id box.
   const saved = await post(ctx.hub, "/admin/ns", { namespace: "docs", name: inputValue(preview, "name"), url: inputValue(preview, "url") }, { cookie: ctx.cookie });
-  assert.equal(redirectTarget(saved).pathname, "/admin/ns/docs");
+  assert.equal(saved.status, 200);
+  assert.match(await saved.text(), /tqk_docs_[0-9a-f]{64}/, "the key is for the id the admin chose");
   assert.ok(await ctx.registry.getNamespace("docs"));
   assert.equal(await ctx.registry.getNamespace("internal-docs"), null);
   assert.deepEqual((await ctx.registry.getNamespace("docs")).origins, ["https://docs.example.com"]);
@@ -979,7 +996,8 @@ test("a URL becomes available the moment its site lets go of it", async () => {
   await post(ctx.hub, "/admin/ns/acme/origins/remove", { origin: "https://acme.workers.dev" }, { cookie: ctx.cookie });
 
   const moved = await post(ctx.hub, "/admin/ns", { namespace: "next", name: "Next", url: "https://acme.workers.dev" }, { cookie: ctx.cookie });
-  assert.equal(redirectTarget(moved).pathname, "/admin/ns/next");
+  assert.equal(moved.status, 200);
+  assert.deepEqual((await ctx.registry.getNamespace("next")).origins, ["https://acme.workers.dev"]);
 });
 
 test("the pages tell the operator the site's code needs no id", async () => {

@@ -3,11 +3,13 @@
   "main": "site-worker.js",
   "compatibility_date": "2026-07-02",
 
-  // SESSION_SECRET is a secret, and must differ per site.
-  "vars": { "TELEGRAM_BOT_USERNAME": "your_bot" },
-
-  // The hub's database, which holds the registry and the login table — copy the id from ./wrangler.jsonc.
-  "d1_databases": [{ "binding": "HUB_DB", "database_name": "hub", "database_id": "<same id as the hub>" }],
+  // HUB_KEY and SESSION_SECRET are secrets (wrangler secret put). The session secret must differ per
+  // site. There are no bindings: this Worker has no database, no KV and no Durable Object, and it
+  // does not need to be on Cloudflare at all.
+  "vars": {
+    "TELEGRAM_BOT_USERNAME": "your_bot",
+    "HUB_URL": "https://auth.example.com/hub-api"
+  },
 
   "observability": { "enabled": true }
 }

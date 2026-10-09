@@ -56,8 +56,10 @@ export function hubGate({ registry, namespace, recordRequests = true, onRequest,
     // from this registry: no grants, no open-site access. Checked wherever a request is in hand
     // (the browser's poll and every guarded request). The bot's scan has no request; the hub checks
     // where that QR was minted instead (see hub.js). Every site has at least one origin.
-    if (ctx?.request) {
-      const origin = originOfRequest(ctx.request);
+    // The origin comes from the request in hand, or, when a site asks the hub over its API, from the
+    // origin that site reports (`ctx.origin`).
+    if (ctx?.request || ctx?.origin !== undefined) {
+      const origin = ctx.request ? originOfRequest(ctx.request) : ctx.origin;
       if (!origin || !state.origins.includes(origin)) return { ok: false, reason: "origin_not_allowed" };
     }
     // Before the grant check, and in every mode: a ban holds even for someone with a grant, and on

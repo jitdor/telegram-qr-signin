@@ -1,6 +1,6 @@
 {
   "name": "telegram-qr-signin",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Telegram as an identity provider: sign in by scanning a QR code, with no phone number, no login code, and no typing at all.",
   "type": "module",
@@ -61,6 +61,7 @@
     "./migrations/oidc-d1.sql": "./migrations/oidc-d1.sql",
     "./migrations/hub-d1.sql": "./migrations/hub-d1.sql",
     "./migrations/hub-d1-upgrade-1.1.sql": "./migrations/hub-d1-upgrade-1.1.sql",
+    "./migrations/hub-d1-upgrade-2.0.sql": "./migrations/hub-d1-upgrade-2.0.sql",
     "./package.json": "./package.json",
     "./oidc": {
       "types": "./types/oidc.d.ts",
@@ -69,6 +70,10 @@
     "./hub": {
       "types": "./types/hub.d.ts",
       "default": "./src/hub/index.js"
+    },
+    "./site": {
+      "types": "./types/site.d.ts",
+      "default": "./src/hub/site.js"
     },
     "./oidc/clients": "./src/oidc/clients.js",
     "./oidc/store": "./src/oidc/store.js"

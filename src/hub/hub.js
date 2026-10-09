@@ -22,6 +22,7 @@ import { TelegramClient } from "../telegram.js";
 import { tokenPattern } from "../crypto.js";
 import { hubGate, superAdminGate, parseRootAdmins } from "./gates.js";
 import { createAdminConsole } from "./console.js";
+import { createHubApi } from "./api.js";
 import { ADMIN_NAMESPACE, NAMESPACE_RE, cleanName, describeUser } from "./validate.js";
 
 const PATH_RE = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
@@ -46,6 +47,8 @@ const REQUEST_NOTICES_PER_HOUR = 5;
  * @param {string} [config.webhookSecret]  The `secret_token` given to setWebhook. Set it.
  * @param {string} [config.webhookPath="/telegram/webhook"]
  * @param {string} [config.adminPath="/admin"]
+ * @param {string} [config.apiPath="/hub-api"]  Where sites call the hub (see ./api.js). A site's
+ *   `hub.url` is this path on the hub's address, e.g. "https://auth.example.com/hub-api".
  * @param {string} [config.adminUrl]       The console's public URL, such as "https://hub.example.com/admin",
  *   for the link in the message super admins get when someone asks to join a site. Without it the
  *   hub uses the address Telegram's webhook calls it at.
@@ -68,6 +71,7 @@ export function createHub(config) {
     webhookPath = "/telegram/webhook",
     adminPath = "/admin",
     adminUrl,
+    apiPath = "/hub-api",
     adminSessionSeconds = 8 * 3600,
     qrOrigin,
     branding,
@@ -83,8 +87,10 @@ export function createHub(config) {
   if (!sessionSecret || typeof sessionSecret !== "string") throw new Error("createHub: `sessionSecret` is required");
   if (!PATH_RE.test(adminPath)) throw new Error("createHub: `adminPath` must look like /admin (no trailing slash)");
   if (!PATH_RE.test(webhookPath)) throw new Error("createHub: `webhookPath` must look like /telegram/webhook");
-  if (webhookPath === adminPath || webhookPath.startsWith(`${adminPath}/`) || adminPath.startsWith(`${webhookPath}/`)) {
-    throw new Error("createHub: `webhookPath` and `adminPath` must not overlap");
+  if (!PATH_RE.test(apiPath)) throw new Error("createHub: `apiPath` must look like /hub-api (no trailing slash)");
+  const overlaps = (a, b) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+  if (overlaps(webhookPath, adminPath) || overlaps(webhookPath, apiPath) || overlaps(adminPath, apiPath)) {
+    throw new Error("createHub: `webhookPath`, `adminPath` and `apiPath` must not overlap");
   }
   const rootAdmins = parseRootAdmins(superAdmins);
   if (!rootAdmins.length) {
@@ -127,11 +133,13 @@ export function createHub(config) {
     registry,
     rootAdmins,
     adminPath,
+    apiPath,
     secret: sessionSecret,
     onError,
     onApproved: (approval) => notifyApproved(approval),
   });
   const handleAdminStart = createStartHandler(adminAuth, { telegram });
+  const api = createHubApi({ registry, store, apiPath, onError });
 
   /** `[namespace, token]` from a /start message, shaped like createTelegramQrAuth's own parser. */
   function parseStart(text) {
@@ -318,7 +326,7 @@ export function createHub(config) {
   async function handle(request) {
     const { pathname } = new URL(request.url);
     if (pathname === webhookPath) return webhook(request);
-    return adminConsole.handle(request);
+    return (await api.handle(request)) ?? adminConsole.handle(request);
   }
 
   return {
@@ -332,7 +340,7 @@ export function createHub(config) {
     handleUpdate,
 
     rootAdmins,
-    paths: { webhook: webhookPath, admin: adminPath },
+    paths: { webhook: webhookPath, admin: adminPath, api: apiPath },
     adminAuth,
     registry,
     store,

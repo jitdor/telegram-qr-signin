@@ -8,7 +8,7 @@ import { MemoryHubStore } from "../src/hub/store.js";
 import { MemoryLoginStore } from "../src/stores/memory.js";
 import { chatMember } from "../src/gates.js";
 import { makeFakeTelegram, makeRequest, cookieFrom } from "./helpers.mjs";
-import { ROOT, ALICE, BOB, MALLORY, ORIGIN, makeHub, makeSite, login, startUpdate, webhookRequest, lastReply, signInToConsole } from "./hub-helpers.mjs";
+import { ROOT, ALICE, BOB, MALLORY, ORIGIN, makeHub, makeSite, login, plantLogin, visit, startUpdate, webhookRequest, lastReply, signInToConsole } from "./hub-helpers.mjs";
 
 /** Mints a QR on a site, scans it through the hub's webhook, polls the site. */
 async function signInToSite(ctx, site, user) {
@@ -79,16 +79,21 @@ test("switching a site off, or deleting it, shuts it immediately and says why", 
   const ctx = await setup();
   const { cookie } = await signInToSite(ctx, ctx.acme, ALICE);
 
+  const { token } = await login(ctx.acme); // minted while the site was on
   await ctx.registry.updateNamespace("acme", { enabled: false });
   assert.equal((await ctx.acme.guard(makeRequest("https://acme.example/", { cookie }))).reason, "namespace_disabled");
-  assert.equal((await signInToSite(ctx, ctx.acme, ALICE)).status, "pending");
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
   assert.match(lastReply(ctx.telegram), /switched off/i);
+  await assert.rejects(login(ctx.acme), (err) => err.code === "namespace_disabled", "and the hub will not even start a sign-in for it");
 
   await ctx.registry.updateNamespace("acme", { enabled: true });
   assert.equal((await ctx.acme.guard(makeRequest("https://acme.example/", { cookie }))).ok, true, "access was kept, not erased");
 
+  // A deleted site's key goes with it: the hub no longer knows the site, so it answers no one for it.
   await ctx.registry.deleteNamespace("acme");
-  assert.equal((await ctx.acme.guard(makeRequest("https://acme.example/", { cookie }))).reason, "unknown_namespace");
+  const gone = await ctx.acme.guard(makeRequest("https://acme.example/", { cookie }));
+  assert.equal(gone.ok, false);
+  assert.equal(gone.response.status, 503);
 });
 
 test("a scan on an approval site leaves a request an admin can approve — but only for a QR that was really minted", async () => {
@@ -177,10 +182,10 @@ test("a registry outage is retryable: the visitor is asked to try again, nobody 
 
 test("a registry outage while the hub looks up a scan gets a retry message, and the webhook still acks", async () => {
   const ctx = await setup();
+  const { token } = await login(ctx.acme);
   ctx.registry.getNamespace = async () => {
     throw new Error("D1 is down");
   };
-  const { token } = await login(ctx.acme);
   const response = await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
   assert.equal(response.status, 200);
   assert.match(lastReply(ctx.telegram), /try again|scan the same/i);
@@ -242,9 +247,9 @@ test("a block beats a grant, with its own reason, and does not clog the approval
   assert.match(lastReply(ctx.telegram), /can't sign in to Acme dashboard/i);
   assert.deepEqual(await ctx.registry.listRequests("acme"), []);
 
-  const gate = ctx.acme.authorize;
-  assert.deepEqual(await gate({ id: ALICE.id }, { stage: "session" }), { ok: false, reason: "blocked" });
-  assert.deepEqual(await gate({ id: MALLORY.id }, { stage: "session" }), { ok: false, reason: "not_granted" });
+  const gate = (user) => ctx.acme.authorize(user, { stage: "session", request: visit("https://acme.example") });
+  assert.deepEqual(await gate({ id: ALICE.id }), { ok: false, reason: "blocked" });
+  assert.deepEqual(await gate({ id: MALLORY.id }), { ok: false, reason: "not_granted" });
 });
 
 test("blocking someone ends their open session on their next request, in either mode", async () => {
@@ -284,10 +289,13 @@ test("a site that is switched off stays off, whatever its mode", async () => {
   const ctx = await setup();
   await ctx.registry.createNamespace({ namespace: "forum", origins: ["https://forum.example"], name: "The forum", access: "anyone" });
   await ctx.registry.updateNamespace("forum", { enabled: false });
+  await ctx.registry.updateNamespace("forum", { enabled: true });
   const forum = makeSite(ctx, "forum");
-  assert.equal((await signInToSite(ctx, forum, BOB)).status, "pending");
+  const { token } = await login(forum); // minted while it was on
+  await ctx.registry.updateNamespace("forum", { enabled: false });
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start forum_${token}`, BOB)));
   assert.match(lastReply(ctx.telegram), /switched off/i);
-  assert.equal((await forum.authorize({ id: BOB.id }, { stage: "session" })).reason, "namespace_disabled");
+  assert.equal((await forum.authorize({ id: BOB.id }, { stage: "session", request: visit("https://forum.example") })).reason, "namespace_disabled");
 });
 
 test("the refusal text follows the gate's verdict, even if the site changes between lookup and scan", async () => {
@@ -319,8 +327,11 @@ const STAGING = "https://staging.example";
 
 test("a QR shown at a URL the namespace is not registered for is refused at the scan, and says why", async () => {
   const ctx = await setup();
-  // Staging copied production's config, namespace included, but is not a registered URL.
-  const { token } = await login(ctx.acme, STAGING);
+  // Staging copied production's config, key included, but is not a registered URL: the hub will not
+  // start a sign-in for it...
+  await assert.rejects(login(ctx.acme, STAGING), (err) => err.code === "origin_not_allowed");
+  // ...and a QR that got into the store anyway (it should not be possible) is refused at the scan.
+  const token = await plantLogin(ctx, "acme", { origin: STAGING });
 
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE))); // Alice IS granted
   assert.match(lastReply(ctx.telegram), /isn't registered for Acme dashboard/i);
@@ -330,7 +341,8 @@ test("a QR shown at a URL the namespace is not registered for is refused at the 
 
 test("a QR that records no origin cannot be matched to the site, so it is refused too", async () => {
   const ctx = await setup();
-  const { token } = await ctx.acme.beginLogin(); // no request: nothing recorded about where it was shown
+  await assert.rejects(ctx.acme.beginLogin(), (err) => err.code === "origin_not_allowed", "the hub will not start a sign-in with no origin");
+  const token = await plantLogin(ctx, "acme", null); // nothing recorded about where it was shown
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start acme_${token}`, ALICE)));
   assert.match(lastReply(ctx.telegram), /isn't registered for/i);
   assert.equal((await ctx.store.get(token, "acme")).status, "pending");
@@ -396,16 +408,19 @@ test("binding applies to an open site too: the whole world still cannot use it f
   const forum = makeSite(ctx, "forum");
   assert.equal((await signInToSite(ctx, forum, MALLORY)).status, "confirmed");
 
-  const { token } = await login(forum, STAGING);
+  await assert.rejects(login(forum, STAGING), (err) => err.code === "origin_not_allowed");
+  const token = await plantLogin(ctx, "forum", { origin: STAGING });
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start forum_${token}`, BOB)));
   assert.match(lastReply(ctx.telegram), /isn't registered/i);
   assert.equal((await forum.authorize({ id: BOB.id }, { request: makeRequest(`${STAGING}/`), stage: "session" })).reason, "origin_not_allowed");
 });
 
-test("the origin check needs a request: the gate at the scan itself defers to the hub's check", async () => {
+test("a site cannot confirm a sign-in, and a check needs the request it is for", async () => {
   const ctx = await setup();
-  assert.equal(await ctx.acme.authorize({ id: ALICE.id }, { stage: "confirm" }), true);
+  assert.equal((await ctx.acme.authorize({ id: ALICE.id }, { stage: "confirm" })).reason, "not_supported", "only the hub's bot confirms");
+  assert.equal(await ctx.acme.authorize({ id: ALICE.id }, { stage: "session", request: visit("https://acme.example") }), true);
   assert.equal((await ctx.acme.authorize({ id: ALICE.id }, { stage: "session", request: makeRequest(`${STAGING}/`) })).reason, "origin_not_allowed");
+  assert.equal((await ctx.acme.authorize({ id: ALICE.id }, { stage: "session" })).reason, "origin_not_allowed", "no request, no origin, no site to check");
 });
 
 test("the console's own sign-in is not bound to a site's URL", async () => {
@@ -423,11 +438,19 @@ test("a site cannot turn off the recording the hub's binding relies on", () => {
 
 test("a site needs no bot token, and refuses to start without its own session secret", () => {
   const ctx = makeHub();
-  assert.ok(makeSite(ctx, "acme").paths);
-  assert.throws(() => createSiteAuth({ namespace: "acme", botUsername: "b", store: ctx.store, registry: ctx.registry }), /session\.secret/);
-  assert.throws(() => createSiteAuth({ namespace: "hub-admin", botUsername: "b", store: ctx.store, registry: ctx.registry, session: { secret: "x" } }), /reserved/);
-  assert.throws(() => createSiteAuth({ namespace: "a_b", botUsername: "b", store: ctx.store, registry: ctx.registry, session: { secret: "x" } }), /namespace/);
-  assert.throws(() => createSiteAuth({ namespace: "acme", botUsername: "b", store: ctx.store, session: { secret: "x" } }), /registry/);
+  const site = makeSite(ctx, "acme");
+  assert.ok(site.paths);
+  const hub = { url: `${ORIGIN}/hub-api`, key: `tqk_acme_${"0".repeat(64)}` };
+  assert.throws(() => createSiteAuth({ hub, botUsername: "b" }), /session\.secret/);
+  assert.throws(() => createSiteAuth({ botUsername: "b", session: { secret: "x" } }), /`hub` is required/);
+  assert.throws(() => createSiteAuth({ hub: { ...hub, key: "nope" }, botUsername: "b", session: { secret: "x" } }), /site key/);
+  assert.throws(() => createSiteAuth({ hub: { ...hub, url: "http://hub.example/hub-api" }, botUsername: "b", session: { secret: "x" } }), /https/);
+  assert.throws(() => createSiteAuth({ hub: { ...hub, url: "https://u:p@hub.example/x" }, botUsername: "b", session: { secret: "x" } }), /plain address/);
+  // The options that gave a site the hub's data are gone, and say so rather than being ignored.
+  for (const gone of ["registry", "store", "namespace"]) {
+    assert.throws(() => createSiteAuth({ hub, botUsername: "b", session: { secret: "x" }, [gone]: {} }), new RegExp(`\\\`${gone}\\\` is no longer an option`));
+  }
+  assert.equal(site.namespace, "acme", "the key says which site this is");
 });
 
 test("a site's own gate is ANDed with the hub's", async () => {
@@ -437,8 +460,9 @@ test("a site's own gate is ANDed with the hub's", async () => {
   await ctx.registry.addGrant({ namespace: "acme", id: BOB.id });
 
   // Alice holds a grant but is not in the chat; Bob holds both.
-  assert.equal((await strict.authorize({ id: ALICE.id }, { telegram, stage: "session" })).ok, false);
-  assert.equal(await strict.authorize({ id: BOB.id }, { telegram, stage: "session" }), true);
+  const request = visit("https://acme.example");
+  assert.equal((await strict.authorize({ id: ALICE.id }, { telegram, stage: "session", request })).ok, false);
+  assert.equal(await strict.authorize({ id: BOB.id }, { telegram, stage: "session", request }), true);
 });
 
 test("a site that composes a Telegram gate without a bot token fails closed and says why", async () => {
@@ -447,7 +471,7 @@ test("a site that composes a Telegram gate without a bot token fails closed and 
   const site = makeSite(ctx, "acme", { authorize: chatMember({ chatId: "-100", onError: (err) => reported.push(err.message) }) });
   await ctx.registry.addGrant({ namespace: "acme", id: BOB.id });
 
-  const result = await site.authorize({ id: BOB.id }, { telegram: site.telegram, stage: "session" });
+  const result = await site.authorize({ id: BOB.id }, { telegram: site.telegram, stage: "session", request: visit("https://acme.example") });
   assert.equal(result.ok, false, "granted by the hub but unverifiable by the extra gate is a refusal, not a pass");
   assert.equal(result.transient, true);
   assert.match(reported.join(), /no Telegram client/);

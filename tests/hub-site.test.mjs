@@ -1,15 +1,13 @@
-// A site that is not told its namespace: createSiteAuth({ registry, store, session, ... }) with no
-// `namespace`, resolving it from the origin each request arrives at.
+// A site as it is deployed in 2.0: it holds the hub's address and its own key, and nothing else of
+// the hub's. Everything it learns, it learns by asking the hub over HTTPS.
 
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
 import { createSiteAuth } from "../src/hub/site.js";
-import { MemoryHubStore } from "../src/hub/store.js";
 import { D1HubStore } from "../src/hub/d1-store.js";
-import { OriginInUseError } from "../src/hub/validate.js";
 import { makeRequest, cookieFrom, makeFakeD1 } from "./helpers.mjs";
-import { ROOT, ALICE, BOB, MALLORY, makeHub, makeDynamicSite, startUpdate, webhookRequest, lastReply, post, signInToConsole } from "./hub-helpers.mjs";
+import { ROOT, ALICE, BOB, MALLORY, ORIGIN, makeHub, makeSite, plantLogin, startUpdate, webhookRequest, lastReply, post, get, signInToConsole, redirectTarget } from "./hub-helpers.mjs";
 
 const ACME = "https://acme.example";
 const FORUM = "https://forum.example";
@@ -19,12 +17,18 @@ async function setup() {
   await ctx.registry.createNamespace({ namespace: "acme", name: "Acme dashboard", origins: [ACME] });
   await ctx.registry.createNamespace({ namespace: "forum", name: "The forum", origins: [FORUM], access: "anyone" });
   await ctx.registry.addGrant({ namespace: "acme", id: ALICE.id });
-  ctx.site = makeDynamicSite(ctx);
+  ctx.calls = [];
+  const spy = (url, init) => {
+    ctx.calls.push({ method: init?.method ?? "GET", url: String(url), headers: init?.headers });
+    return ctx.hub.fetch(new Request(url, init));
+  };
+  ctx.acme = makeSite(ctx, "acme", { hub: { fetch: spy } });
+  ctx.forum = makeSite(ctx, "forum", { hub: { fetch: spy } });
   return ctx;
 }
 
 /** Shows a QR at `host`, scans it through the hub as `user`, and polls. */
-async function signIn(ctx, host, user, site = ctx.site) {
+async function signIn(ctx, site, host, user) {
   const { token, payload } = await site.beginLogin({ request: makeRequest(`${host}/auth/login`) });
   await ctx.hub.webhook(webhookRequest(startUpdate(`/start ${payload}`, user)));
   const polled = await site.poll(makeRequest(`${host}/auth/poll?token=${token}`));
@@ -33,228 +37,291 @@ async function signIn(ctx, host, user, site = ctx.site) {
   return { token, payload, status: body.status, reason: body.reason, cookie: value ? `${site.cookieName}=${value}` : null };
 }
 
-test("a site with no namespace works out which site it is from the URL it was reached at", async () => {
+test("a granted person signs in to a site that holds only the hub's address and its key", async () => {
   const ctx = await setup();
-  assert.equal(await ctx.site.namespaceFor(makeRequest(`${ACME}/anything?x=1`)), "acme");
-  assert.equal(await ctx.site.namespaceFor(makeRequest(`${FORUM}/`)), "forum");
-  assert.equal(await ctx.site.namespaceFor(makeRequest("https://nobody.example/")), null);
-  assert.equal(await ctx.site.namespaceFor(makeRequest("http://acme.example/")), null, "scheme is part of the origin");
-});
-
-test("it signs a granted person in end to end, with the namespace in the QR taken from the origin", async () => {
-  const ctx = await setup();
-  const result = await signIn(ctx, ACME, ALICE);
-  assert.match(result.payload, /^acme_[0-9a-f]{32}$/, "the QR says which site, and the site never said");
+  const result = await signIn(ctx, ctx.acme, ACME, ALICE);
   assert.equal(result.status, "confirmed");
-  assert.match(lastReply(ctx.telegram), /signed in to Acme dashboard/i);
+  assert.match(result.payload, /^acme_[0-9a-f]{32}$/, "the site's id in the QR comes from its key");
 
-  const guarded = await ctx.site.guard(makeRequest(`${ACME}/`, { cookie: result.cookie }));
-  assert.equal(guarded.ok, true);
-  assert.equal(guarded.session.id, ALICE.id);
+  const gate = await ctx.acme.guard(makeRequest(`${ACME}/`, { cookie: result.cookie }));
+  assert.equal(gate.ok, true);
+  assert.equal(gate.session.id, ALICE.id);
 });
 
-test("one Worker serving two registered sites keeps them apart", async () => {
+test("everything the site does is an HTTPS call to the hub's API with its key, and nothing else", async () => {
   const ctx = await setup();
-  // The same code, the same auth object, reached at two different URLs.
-  const alice = await signIn(ctx, ACME, ALICE);
-  assert.equal(alice.status, "confirmed");
-  assert.equal((await signIn(ctx, ACME, MALLORY)).status, "pending", "acme needs a grant");
-  const stranger = await signIn(ctx, FORUM, MALLORY);
-  assert.equal(stranger.status, "confirmed", "the forum is open");
-  assert.match(stranger.payload, /^forum_/);
+  const { cookie } = await signIn(ctx, ctx.acme, ACME, ALICE);
+  await ctx.acme.guard(makeRequest(`${ACME}/`, { cookie }));
 
-  // Alice's acme session is not a forum session, and does not make the forum her site.
-  assert.equal((await ctx.site.guard(makeRequest(`${ACME}/`, { cookie: alice.cookie }))).ok, true);
-  const crossed = await ctx.site.guard(makeRequest(`${FORUM}/`, { cookie: alice.cookie }));
-  assert.equal(crossed.ok, true, "the forum is open to anyone, which includes her; the cookie is only a signed id");
-  await ctx.registry.addBlock({ namespace: "forum", id: ALICE.id });
-  assert.equal((await ctx.site.guard(makeRequest(`${FORUM}/`, { cookie: alice.cookie }))).reason, "blocked");
-  assert.equal((await ctx.site.guard(makeRequest(`${ACME}/`, { cookie: alice.cookie }))).ok, true, "a block on one site is not a block on another");
+  assert.ok(ctx.calls.length >= 5, "start, poll, consume, check at poll, check at guard");
+  for (const call of ctx.calls) {
+    assert.match(call.url, /^https:\/\/hub\.example\/hub-api\/v1\//, call.url);
+    assert.match(call.headers.Authorization, /^Bearer tqk_acme_[0-9a-f]{64}$/);
+  }
+  assert.deepEqual(
+    [...new Set(ctx.calls.map((c) => `${c.method} ${new URL(c.url).pathname.replace(/[0-9a-f]{32}/, ":token")}`))].sort(),
+    ["DELETE /hub-api/v1/logins/:token".replace("DELETE", "DELETE"), "GET /hub-api/v1/logins/:token", "POST /hub-api/v1/check", "POST /hub-api/v1/logins", "POST /hub-api/v1/logins/:token/consume"].filter((c) => !c.startsWith("DELETE")).sort(),
+    "no call reads the access list, other sites, or the admins"
+  );
 });
 
-test("an unregistered URL gets no QR, no login page, no poll and no session — from the very same code", async () => {
+test("a site holds no store, registry, or bot token of the hub's", async () => {
   const ctx = await setup();
-  const elsewhere = "https://staging.example";
-
-  const login = await ctx.site.handle(makeRequest(`${elsewhere}/auth/login`));
-  assert.equal(login.status, 403);
-  assert.doesNotMatch(await login.text(), /<svg|t\.me/i);
-
-  const guard = await ctx.site.guard(makeRequest(`${elsewhere}/`));
-  assert.deepEqual([guard.ok, guard.reason, guard.response.status], [false, "origin_not_allowed", 403]);
-
-  const poll = await ctx.site.poll(makeRequest(`${elsewhere}/auth/poll?token=${"a".repeat(32)}`));
-  assert.deepEqual([poll.status, (await poll.json()).reason], [403, "origin_not_allowed"]);
-
-  assert.equal((await ctx.site.scan(makeRequest(`${elsewhere}/auth/q/${"a".repeat(32)}`))).status, 403);
-  assert.equal((await ctx.site.loginResponse({ request: makeRequest(`${elsewhere}/`) })).status, 403);
-  await assert.rejects(ctx.site.beginLogin({ request: makeRequest(`${elsewhere}/`) }), /not a registered site/);
-  await assert.rejects(ctx.site.loginPage({ request: makeRequest(`${elsewhere}/`) }), /not a registered site/);
-  await assert.rejects(ctx.site.beginLogin(), /not a registered site/, "no request, no site");
-
-  assert.deepEqual(await ctx.site.authorize({ id: ALICE.id }, { stage: "session" }), { ok: false, reason: "origin_not_allowed" }, "no request, no site");
+  assert.equal(ctx.acme.store.constructor.name, "HubLoginStore");
+  assert.equal(ctx.acme.registry, undefined);
+  await assert.rejects(ctx.acme.store.confirm(), /only the hub's bot/);
 });
+
+test("one site's key reaches nothing of another's: not its sign-ins, not its people", async () => {
+  const ctx = await setup();
+  const { token } = await ctx.acme.beginLogin({ request: makeRequest(`${ACME}/auth/login`) });
+
+  // The forum's key asks for acme's token: it is looked up under the FORUM, so there is nothing there.
+  assert.equal(await ctx.forum.store.get(token), null);
+  assert.equal(await ctx.forum.store.consume(token), null);
+  await ctx.forum.store.remove(token); // a no-op on someone else's record
+  assert.equal((await ctx.store.get(token, "acme")).status, "pending", "acme's sign-in is untouched");
+
+  // And its check is about the forum: Alice holds a grant on acme, not on the open forum's list.
+  assert.equal(await ctx.forum.authorize({ id: ALICE.id }, { stage: "session", request: makeRequest(`${FORUM}/`) }), true, "open to anyone");
+  assert.equal((await ctx.acme.authorize({ id: BOB.id }, { stage: "session", request: makeRequest(`${ACME}/`) })).reason, "not_granted");
+});
+
+// --- When the hub cannot answer ------------------------------------------------------------------
+
+test("hub down: the login page, the poll and the guard each say 'try again', and nobody is signed out", async () => {
+  const ctx = await setup();
+  const { cookie } = await signIn(ctx, ctx.acme, ACME, ALICE);
+  const errors = [];
+  const down = makeSite(ctx, "acme", {
+    onError: (err) => errors.push(err),
+    hub: { fetch: async () => { throw new Error("connect ECONNREFUSED"); } },
+  });
+
+  const page = await down.handle(makeRequest(`${ACME}/auth/login`));
+  assert.equal(page.status, 503);
+  assert.equal(page.headers.get("Retry-After"), "5");
+  assert.match(await page.text(), /temporarily unavailable/i);
+
+  const poll = await down.poll(makeRequest(`${ACME}/auth/poll?token=${"a".repeat(32)}`));
+  assert.equal(poll.status, 503);
+  assert.deepEqual(await poll.json(), { status: "unavailable", reason: "hub_unavailable" }, "a status the page keeps polling through");
+
+  const guarded = await down.guard(makeRequest(`${ACME}/`, { cookie }));
+  assert.equal(guarded.ok, false);
+  assert.equal(guarded.response.status, 503);
+  assert.equal(guarded.response.headers.get("Set-Cookie"), null, "the cookie is not torn up on an outage");
+  assert.ok(errors.length >= 3 && errors.every((e) => e.code === "hub_unreachable"));
+
+  assert.equal((await ctx.acme.guard(makeRequest(`${ACME}/`, { cookie }))).ok, true, "and the same cookie works once the hub is back");
+});
+
+test("a hub that does not answer in time is treated as down", async () => {
+  const ctx = await setup();
+  const slow = makeSite(ctx, "acme", {
+    hub: { timeoutMs: 25, fetch: (url, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted")))) },
+  });
+  const started = Date.now();
+  const keepAlive = setTimeout(() => {}, 5000); // AbortSignal.timeout does not hold the process open; a real pending fetch does
+  try {
+    const response = await slow.handle(makeRequest(`${ACME}/auth/login`));
+    assert.equal(response.status, 503);
+    assert.ok(Date.now() - started < 1000);
+  } finally {
+    clearTimeout(keepAlive);
+  }
+});
+
+test("a wrong or revoked key is an operator's problem: visitors are asked to try again, and the cause is logged", async () => {
+  const ctx = await setup();
+  const { cookie } = await signIn(ctx, ctx.acme, ACME, ALICE);
+  const errors = [];
+  const wrong = createSiteAuth({
+    hub: { url: `${ORIGIN}/hub-api`, key: `tqk_acme_${"0".repeat(64)}`, fetch: (url, init) => ctx.hub.fetch(new Request(url, init)) },
+    botUsername: "hub_bot",
+    session: { secret: "site-secret-acme-site-secret-00" },
+    onError: (err) => errors.push(err),
+  });
+  const page = await wrong.handle(makeRequest(`${ACME}/auth/login`));
+  assert.equal(page.status, 503);
+  assert.doesNotMatch(await page.text(), /key|unauthorized|401/i, "a visitor is not told about the key");
+  const guarded = await wrong.guard(makeRequest(`${ACME}/`, { cookie }));
+  assert.equal(guarded.response.status, 503);
+  assert.equal(guarded.response.headers.get("Set-Cookie"), null, "a bad key does not sign anyone out");
+  assert.ok(errors.length >= 2 && errors.every((e) => e.code === "unauthorized"));
+});
+
+test("a URL the hub does not have for this site, and a switched-off site, are refused with their own answers", async () => {
+  const ctx = await setup();
+  const elsewhere = await ctx.acme.handle(makeRequest("https://staging.example/auth/login"));
+  assert.equal(elsewhere.status, 403);
+  assert.match(await elsewhere.text(), /not registered for this site/);
+
+  // A sign-in made at the real address, collected from another: the hub refuses it at the poll.
+  const { token, payload } = await ctx.acme.beginLogin({ request: makeRequest(`${ACME}/auth/login`) });
+  await ctx.hub.webhook(webhookRequest(startUpdate(`/start ${payload}`, ALICE)));
+  const poll = await ctx.acme.poll(makeRequest(`https://staging.example/auth/poll?token=${token}`));
+  assert.deepEqual(await poll.json(), { status: "denied", reason: "origin_not_allowed" });
+  assert.equal(poll.headers.get("Set-Cookie"), null);
+
+  await ctx.registry.updateNamespace("acme", { enabled: false });
+  const off = await ctx.acme.handle(makeRequest(`${ACME}/auth/login`));
+  assert.equal(off.status, 403);
+  assert.match(await off.text(), /switched off/);
+});
+
+// --- Cost, and what is cached --------------------------------------------------------------------
+
+test("by default the hub is asked on every request, so a revocation applies to the very next one", async () => {
+  const ctx = await setup();
+  const { cookie } = await signIn(ctx, ctx.acme, ACME, ALICE);
+  const checks = () => ctx.calls.filter((c) => c.url.endsWith("/check")).length;
+  const before = checks();
+  await ctx.acme.guard(makeRequest(`${ACME}/`, { cookie }));
+  await ctx.acme.guard(makeRequest(`${ACME}/`, { cookie }));
+  assert.equal(checks() - before, 2);
+
+  await ctx.registry.removeGrant("acme", ALICE.id);
+  const denied = await ctx.acme.guard(makeRequest(`${ACME}/`, { cookie }));
+  assert.equal(denied.ok, false);
+  assert.equal(denied.reason, "not_granted");
+});
+
+test("checkCacheSeconds trades that for fewer calls: a yes is reused for that long, a no never is", async () => {
+  const ctx = await setup();
+  const cached = makeSite(ctx, "acme", { hub: { checkCacheSeconds: 30, fetch: (url, init) => (ctx.calls.push({ url: String(url) }), ctx.hub.fetch(new Request(url, init))) } });
+  const { cookie } = await signIn(ctx, cached, ACME, ALICE);
+  const checks = () => ctx.calls.filter((c) => c.url.endsWith("/check")).length;
+
+  const before = checks();
+  for (let i = 0; i < 5; i++) assert.equal((await cached.guard(makeRequest(`${ACME}/`, { cookie }))).ok, true);
+  assert.equal(checks() - before, 1, "one call to learn it, then the last yes is reused");
+
+  let now = Date.now();
+  const clock = mock.method(Date, "now", () => now);
+  try {
+    now += 31_000;
+    assert.equal((await cached.guard(makeRequest(`${ACME}/`, { cookie }))).ok, true);
+    assert.equal(checks() - before, 2, "asked again once it expired");
+
+    await ctx.registry.removeGrant("acme", ALICE.id);
+    now += 31_000;
+    assert.equal((await cached.guard(makeRequest(`${ACME}/`, { cookie }))).ok, false);
+    assert.equal((await cached.guard(makeRequest(`${ACME}/`, { cookie }))).ok, false);
+    assert.equal(checks() - before, 4, "a refusal is asked about every time");
+  } finally {
+    clock.mock.restore();
+  }
+});
+
+// --- A site's own moderation ---------------------------------------------------------------------
+
+test("an open site can block and unblock people on its own list, through the hub, and only its own", async () => {
+  const ctx = await setup();
+  const { cookie } = await signIn(ctx, ctx.forum, FORUM, MALLORY);
+
+  assert.deepEqual(await ctx.forum.block(MALLORY.id, "spam"), { ok: true, added: true });
+  assert.deepEqual((await ctx.registry.listBlocks("forum")).map((b) => [b.id, b.label]), [[MALLORY.id, "spam"]]);
+  assert.deepEqual(await ctx.registry.listBlocks("acme"), [], "acme's list is not touched");
+  assert.equal((await ctx.forum.guard(makeRequest(`${FORUM}/`, { cookie }))).reason, "blocked", "it ends their session on the next request");
+
+  assert.deepEqual(await ctx.forum.unblock(MALLORY.id), { ok: true, removed: true });
+  assert.equal((await ctx.forum.guard(makeRequest(`${FORUM}/`, { cookie }))).ok, true);
+
+  await ctx.forum.block(BOB.id);
+  const [entry] = await ctx.registry.listAudit();
+  assert.deepEqual([entry.actor, entry.action, entry.target, entry.detail], [null, "block.add", "forum", `${BOB.id} (by the site)`]);
+});
+
+// --- Through the console, start to finish --------------------------------------------------------
+
+test("console end to end: add a site, copy its key from the page once, and the site works with only that", async () => {
+  const ctx = makeHub();
+  const cookie = await signInToConsole(ctx.hub, ROOT);
+  const created = await post(ctx.hub, "/admin/ns", { namespace: "docs", name: "Docs", url: "https://docs.example" }, { cookie });
+  const html = await created.text();
+  const key = html.match(/tqk_docs_[0-9a-f]{64}/)[0];
+  assert.match(html, new RegExp(`url: &quot;${ORIGIN}/hub-api&quot;`), "the snippet shows the address to use");
+  await ctx.registry.addGrant({ namespace: "docs", id: ALICE.id });
+
+  const docs = createSiteAuth({
+    hub: { url: `${ORIGIN}/hub-api`, key, fetch: (url, init) => ctx.hub.fetch(new Request(url, init)) },
+    botUsername: "hub_bot",
+    session: { secret: "docs-secret-docs-secret-docs-0000" },
+  });
+  assert.equal((await signIn(ctx, docs, "https://docs.example", ALICE)).status, "confirmed");
+  assert.equal((await signIn(ctx, docs, "https://docs.example", BOB)).status, "pending", "Bob has no grant");
+});
+
+test("making a new key replaces the old one at once, behind a typed confirmation, and shows the new one once", async () => {
+  const ctx = makeHub();
+  const cookie = await signInToConsole(ctx.hub, ROOT);
+  const html = await (await post(ctx.hub, "/admin/ns", { namespace: "docs", name: "Docs", url: "https://docs.example" }, { cookie })).text();
+  const oldKey = html.match(/tqk_docs_[0-9a-f]{64}/)[0];
+  const via = (key) => createSiteAuth({ hub: { url: `${ORIGIN}/hub-api`, key, fetch: (url, init) => ctx.hub.fetch(new Request(url, init)) }, botUsername: "hub_bot", session: { secret: "s-docs-s-docs-s-docs-s-docs-0" }, onError: () => {} });
+  const request = makeRequest("https://docs.example/auth/login");
+  assert.equal((await via(oldKey).handle(request)).status, 200);
+
+  const refused = await post(ctx.hub, "/admin/ns/docs/key", {}, { cookie });
+  assert.equal(redirectTarget(refused).searchParams.get("err"), "confirm_key", "replacing needs the id typed");
+  assert.equal((await via(oldKey).handle(request)).status, 200, "nothing changed");
+
+  const done = await post(ctx.hub, "/admin/ns/docs/key", { confirm: "docs" }, { cookie });
+  assert.equal(done.status, 200);
+  const newKey = (await done.text()).match(/tqk_docs_[0-9a-f]{64}/)[0];
+  assert.notEqual(newKey, oldKey);
+  assert.equal((await via(oldKey).handle(request)).status, 503, "the old key stopped at once");
+  assert.equal((await via(newKey).handle(request)).status, 200);
+  assert.ok(!JSON.stringify(await ctx.registry.listAudit()).includes(newKey));
+});
+
+test("a site with no key yet is flagged on its page, and one click makes it", async () => {
+  const ctx = makeHub();
+  const cookie = await signInToConsole(ctx.hub, ROOT);
+  await ctx.registry.createNamespace({ namespace: "old", name: "Old site", origins: ["https://old.example"] }); // as a 1.x hub had it
+  const page = await (await get(ctx.hub, "/admin/ns/old", cookie)).text();
+  assert.match(page, /Site key <span class="pill warn">None<\/span>/);
+  assert.match(page, /cannot sign anyone in/);
+
+  const made = await post(ctx.hub, "/admin/ns/old/key", {}, { cookie });
+  assert.equal(made.status, 200, "no typed confirmation is needed when there is nothing to replace");
+  assert.match(await made.text(), /tqk_old_[0-9a-f]{64}/);
+});
+
+test("deleting a site deletes its key", async () => {
+  const ctx = await setup();
+  assert.ok(await ctx.registry.getSiteKey("acme"));
+  await ctx.registry.deleteNamespace("acme");
+  assert.equal(await ctx.registry.getSiteKey("acme"), null);
+  assert.equal((await ctx.acme.handle(makeRequest(`${ACME}/auth/login`))).status, 503);
+});
+
+// --- The rest of what a site does ----------------------------------------------------------------
 
 test("only the sign-in endpoints are the site's: everything else passes through untouched", async () => {
   const ctx = await setup();
-  assert.equal(await ctx.site.handle(makeRequest(`${ACME}/dashboard`)), null);
-  assert.equal(await ctx.site.handle(makeRequest("https://staging.example/dashboard")), null, "the app's own routes are the app's business");
-  assert.equal((await ctx.site.handle(makeRequest(`${ACME}/auth/login`))).status, 200);
+  assert.equal(await ctx.acme.handle(makeRequest(`${ACME}/dashboard`)), null);
+  assert.equal(await ctx.acme.handle(makeRequest(`${ACME}/api/data`)), null);
+  assert.equal(ctx.calls.length, 0, "and none of that asked the hub anything");
 });
 
-test("the login page at a registered URL carries a QR for that site's namespace", async () => {
+test("signing out needs no hub: clearing a cookie is local", async () => {
   const ctx = await setup();
-  const html = await (await ctx.site.handle(makeRequest(`${FORUM}/auth/login`))).text();
-  assert.match(html, /start=forum_[0-9a-f]{32}/);
-  assert.doesNotMatch(html, /start=acme_/);
+  const down = makeSite(ctx, "acme", { hub: { fetch: async () => { throw new Error("down"); } } });
+  const response = await down.handle(makeRequest(`${ACME}/auth/logout`));
+  assert.ok([200, 302, 303].includes(response.status));
+  assert.match(response.headers.get("Set-Cookie"), /Max-Age=0|Expires=/);
 });
 
-test("signing out works from anywhere: clearing a cookie needs no site", async () => {
+test("the QR can point at the site's own domain: scanning it redirects to Telegram, and asks the hub only whether it is live", async () => {
   const ctx = await setup();
-  const response = await ctx.site.handle(makeRequest("https://staging.example/auth/logout"));
-  assert.equal(response.status, 302);
-  assert.match(response.headers.get("Set-Cookie"), new RegExp(`${ctx.site.cookieName}=;.*Max-Age=0`));
+  const site = makeSite(ctx, "acme", { qrOrigin: ACME, hub: { fetch: (url, init) => ctx.hub.fetch(new Request(url, init)) } });
+  const { token, qrLink } = await site.beginLogin({ request: makeRequest(`${ACME}/auth/login`) });
+  assert.equal(qrLink, `${ACME}/auth/q/${token}`);
+  const scan = await site.handle(makeRequest(`${ACME}/auth/q/${token}`));
+  assert.equal(scan.status, 302);
+  assert.equal(scan.headers.get("Location"), `https://t.me/hub_bot?start=acme_${token}`);
 });
-
-test("registering a URL makes a site work at once, and removing it stops it at once", async () => {
-  const ctx = await setup();
-  const staging = "https://staging.example";
-  assert.equal((await ctx.site.guard(makeRequest(`${staging}/`))).reason, "origin_not_allowed");
-
-  await ctx.registry.addOrigin("acme", staging);
-  const result = await signIn(ctx, staging, ALICE);
-  assert.equal(result.status, "confirmed");
-  assert.equal((await ctx.site.guard(makeRequest(`${staging}/`, { cookie: result.cookie }))).ok, true);
-
-  await ctx.registry.removeOrigin("acme", staging);
-  assert.equal((await ctx.site.guard(makeRequest(`${staging}/`, { cookie: result.cookie }))).reason, "origin_not_allowed");
-});
-
-test("a URL claimed by two sites is refused rather than guessed", async () => {
-  const ctx = await setup();
-  ctx.registry.namespaces.get("forum").origins.push(ACME); // as two admins racing could leave it
-  assert.deepEqual(await ctx.registry.namespacesForOrigin(ACME), ["acme", "forum"]);
-
-  const guard = await ctx.site.guard(makeRequest(`${ACME}/`));
-  assert.deepEqual([guard.ok, guard.reason, guard.response.status], [false, "origin_ambiguous", 403]);
-  assert.match(await guard.response.text(), /more than one site/);
-  assert.equal(await ctx.site.namespaceFor(makeRequest(`${ACME}/`)), null);
-});
-
-test("if the registry cannot be asked, the answer is 'try again', not 'you are signed out'", async () => {
-  const ctx = await setup();
-  const { cookie } = await signIn(ctx, ACME, ALICE);
-  const errors = [];
-  const site = makeDynamicSite(ctx, { onError: (err) => errors.push(err) });
-
-  ctx.registry.namespacesForOrigin = async () => {
-    throw new Error("D1 is down");
-  };
-  const guard = await site.guard(makeRequest(`${ACME}/`, { cookie }));
-  assert.equal(guard.ok, false);
-  assert.equal(guard.response.status, 503);
-  assert.equal(guard.response.headers.get("Retry-After"), "5");
-  assert.equal(guard.response.headers.get("Set-Cookie"), null, "the cookie is not torn up");
-  const poll = await site.poll(makeRequest(`${ACME}/auth/poll?token=${"a".repeat(32)}`));
-  assert.equal(poll.status, 503);
-  const auth = await site.authorize({ id: ALICE.id }, { request: makeRequest(`${ACME}/`) });
-  assert.equal(auth.transient, true);
-  assert.equal(errors.length, 3);
-});
-
-test("a site can still be told its namespace, which pins it and skips the lookup", async () => {
-  const ctx = await setup();
-  let lookups = 0;
-  const real = ctx.registry.namespacesForOrigin.bind(ctx.registry);
-  ctx.registry.namespacesForOrigin = (...args) => (lookups++, real(...args));
-
-  const pinned = createSiteAuth({ namespace: "acme", botUsername: "hub_bot", store: ctx.store, registry: ctx.registry, session: { secret: "pinned-secret-pinned-secret-0000" } });
-  assert.equal(pinned.namespace, "acme");
-  assert.equal(pinned.cookieName, "acme_session", "a pinned site keeps its familiar cookie name");
-  assert.equal((await pinned.guard(makeRequest(`${ACME}/`))).reason, "unauthenticated");
-  assert.equal(lookups, 0);
-});
-
-test("the cookie name is fixed, and configurable, for a site that resolves its namespace", async () => {
-  const ctx = await setup();
-  assert.equal(ctx.site.cookieName, "site_session");
-  assert.equal(makeDynamicSite(ctx, { session: { secret: "x".repeat(32), cookieName: "mine" } }).cookieName, "mine");
-});
-
-test("it is validated exactly like a pinned site", async () => {
-  const ctx = makeHub();
-  assert.throws(() => createSiteAuth({ botUsername: "b", store: ctx.store, session: { secret: "x" } }), /registry/);
-  assert.throws(() => createSiteAuth({ botUsername: "b", store: ctx.store, registry: ctx.registry }), /session\.secret/);
-  assert.throws(() => createSiteAuth({ botUsername: "b", store: ctx.store, registry: ctx.registry, session: { secret: "x" }, captureClient: false }), /captureClient/);
-  assert.throws(() => createSiteAuth(undefined), /registry/);
-  assert.throws(() => createSiteAuth({ namespace: "hub-admin", botUsername: "b", store: ctx.store, registry: ctx.registry, session: { secret: "x" } }), /reserved/);
-});
-
-test("its own extra gate is ANDed with the hub's, at whichever site the request is for", async () => {
-  const ctx = await setup();
-  const gate = async (user) => (user.id === ALICE.id ? true : { ok: false, reason: "extra" });
-  const site = makeDynamicSite(ctx, { authorize: gate });
-  await ctx.registry.addGrant({ namespace: "acme", id: BOB.id });
-  const request = makeRequest(`${ACME}/`);
-  assert.equal(await site.authorize({ id: ALICE.id }, { request, stage: "session" }), true);
-  assert.deepEqual(await site.authorize({ id: BOB.id }, { request, stage: "session" }), { ok: false, reason: "extra" });
-});
-
-test("console end to end: a site added there needs no namespace in its code", async () => {
-  const ctx = makeHub();
-  const cookie = await signInToConsole(ctx.hub, ROOT);
-  await post(ctx.hub, "/admin/ns", { namespace: "docs", name: "Docs", url: "https://docs.example" }, { cookie });
-  await ctx.registry.addGrant({ namespace: "docs", id: ALICE.id });
-  const site = makeDynamicSite(ctx);
-
-  assert.equal((await signIn(ctx, "https://docs.example", ALICE, site)).status, "confirmed");
-  assert.equal((await signIn(ctx, "https://not-docs.example", ALICE, site).catch((e) => ({ error: e.message }))).error?.includes("not a registered site"), true);
-});
-
-// --- one origin, one site ----------------------------------------------------------------------
-
-const STORES = {
-  memory: () => new MemoryHubStore(),
-  d1: () => new D1HubStore(makeFakeD1({ sql: "hub-d1.sql" })),
-};
-
-for (const [kind, make] of Object.entries(STORES)) {
-  test(`[${kind}] a URL can belong to only one site`, async () => {
-    const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme", origins: [ACME] });
-
-    await assert.rejects(store.createNamespace({ namespace: "other", name: "Other", origins: ["https://x.example", ACME] }), (err) => err instanceof OriginInUseError && err.code === "origin_in_use" && err.owner === "acme" && err.origin === ACME);
-    assert.equal(await store.getNamespace("other"), null, "nothing is created when one of its URLs is taken");
-
-    await store.createNamespace({ namespace: "other", name: "Other", origins: ["https://other.example"] });
-    await assert.rejects(store.addOrigin("other", "https://ACME.example/path"), OriginInUseError, "however the URL is written");
-    assert.deepEqual((await store.getNamespace("other")).origins, ["https://other.example"]);
-
-    assert.equal(await store.addOrigin("acme", ACME), false, "a site re-adding its own URL is not a conflict");
-    assert.equal((await store.createNamespace({ namespace: "acme", name: "Again", origins: [ACME] })), false, "re-creating a site is not a conflict either");
-  });
-
-  test(`[${kind}] a URL is free again once its site drops it or is deleted`, async () => {
-    const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme", origins: [ACME, "https://acme.workers.dev"] });
-    await store.removeOrigin("acme", "https://acme.workers.dev");
-    await store.createNamespace({ namespace: "other", name: "Other", origins: ["https://acme.workers.dev"] });
-    assert.deepEqual(await store.namespacesForOrigin("https://acme.workers.dev"), ["other"]);
-
-    await store.deleteNamespace("acme");
-    await store.createNamespace({ namespace: "acme2", name: "Acme 2", origins: [ACME] });
-    assert.deepEqual(await store.namespacesForOrigin(ACME), ["acme2"]);
-  });
-
-  test(`[${kind}] namespacesForOrigin normalises its argument and answers for junk with nothing`, async () => {
-    const store = make();
-    await store.createNamespace({ namespace: "acme", name: "Acme", origins: [ACME] });
-    assert.deepEqual(await store.namespacesForOrigin("HTTPS://Acme.Example:443/path?x"), ["acme"]);
-    for (const junk of ["", "nope", null, undefined, "http://acme.example", "https://evil.example"]) {
-      assert.deepEqual(await store.namespacesForOrigin(junk), [], String(junk));
-    }
-  });
-}
 
 test("D1HubStore: one site's damaged origins do not stop every other site being found", async () => {
   const db = makeFakeD1({ sql: "hub-d1.sql" });
@@ -277,7 +344,7 @@ const visible = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?
 
 test("a hub site's sign-in page names the site and shows its host", async () => {
   const ctx = await setup();
-  const html = await loginHtml(ctx.site, ACME);
+  const html = await loginHtml(ctx.acme, ACME);
   assert.match(html, /<h1>Sign in to Acme dashboard<\/h1>/);
   assert.match(html, /<title>Sign in to Acme dashboard<\/title>/);
   assert.match(html, /<p class="tqa-site">acme\.example<\/p>/);
@@ -285,51 +352,54 @@ test("a hub site's sign-in page names the site and shows its host", async () => 
   assert.doesNotMatch(visible(html), /acme_|namespace/i, "the id itself is never shown as text");
 });
 
-test("each URL's page names its own site, and a port is part of the host shown", async () => {
+test("a port is part of the host shown, and each site names itself", async () => {
   const ctx = await setup();
   await ctx.registry.addOrigin("forum", "https://forum.example:8443");
-  assert.match(await loginHtml(ctx.site, FORUM), /Sign in to The forum/);
-  const withPort = await loginHtml(ctx.site, "https://forum.example:8443");
-  assert.match(withPort, /class="tqa-site">forum\.example:8443</);
-  assert.doesNotMatch(await loginHtml(ctx.site, ACME), /The forum/);
+  assert.match(await loginHtml(ctx.forum, FORUM), /Sign in to The forum/);
+  assert.match(await loginHtml(ctx.forum, "https://forum.example:8443"), /class="tqa-site">forum\.example:8443</);
+  assert.doesNotMatch(await loginHtml(ctx.acme, ACME), /The forum/);
 });
 
-test("the page follows a rename in the console on its next load", async () => {
+test("the page follows a rename in the console, within the half minute the name is remembered", async () => {
   const ctx = await setup();
-  await ctx.registry.updateNamespace("acme", { name: "Acme HQ" });
-  assert.match(await loginHtml(ctx.site, ACME), /<h1>Sign in to Acme HQ<\/h1>/);
+  let now = Date.now();
+  const clock = mock.method(Date, "now", () => now);
+  try {
+    assert.match(await loginHtml(ctx.acme, ACME), /Sign in to Acme dashboard/);
+    await ctx.registry.updateNamespace("acme", { name: "Acme HQ" });
+    assert.match(await loginHtml(ctx.acme, ACME), /Sign in to Acme dashboard/, "still the remembered name");
+    now += 31_000;
+    assert.match(await loginHtml(ctx.acme, ACME), /<h1>Sign in to Acme HQ<\/h1>/);
+  } finally {
+    clock.mock.restore();
+  }
 });
 
 test("a heading the site sets itself is kept, with the host still shown", async () => {
   const ctx = await setup();
-  const site = makeDynamicSite(ctx, { branding: { heading: "📚 Internal docs" } });
+  const site = makeSite(ctx, "acme", { branding: { heading: "📚 Internal docs" } });
   const html = await loginHtml(site, ACME);
   assert.match(html, /<h1>📚 Internal docs<\/h1>/);
   assert.match(html, /class="tqa-site">acme\.example</);
 });
 
-test("a registry failure while naming the site does not stop the page, which still shows the host", async () => {
+test("if the hub cannot name the site the page still shows, with the host alone", async () => {
   const ctx = await setup();
   const errors = [];
-  const site = makeDynamicSite(ctx, { onError: (err) => errors.push(err) });
-  const real = ctx.registry.getNamespace.bind(ctx.registry);
-  ctx.registry.getNamespace = async () => {
-    throw new Error("D1 is down");
-  };
+  const site = makeSite(ctx, "acme", {
+    onError: (err) => errors.push(err),
+    hub: { fetch: (url, init) => (new URL(url).pathname.endsWith("/site") ? Promise.reject(new Error("down")) : ctx.hub.fetch(new Request(url, init))) },
+  });
   const html = await loginHtml(site, ACME);
-  ctx.registry.getNamespace = real;
   assert.match(html, /<h1>Sign in with Telegram<\/h1>/);
   assert.match(html, /class="tqa-site">acme\.example</);
   assert.equal(errors.length, 1);
 });
 
-test("a pinned site's page says the same, and a custom renderer is handed the site", async () => {
+test("a custom renderer is handed the site", async () => {
   const ctx = await setup();
-  const pinned = createSiteAuth({ namespace: "acme", botUsername: "hub_bot", store: ctx.store, registry: ctx.registry, session: { secret: "pinned-secret-pinned-secret-0000" } });
-  assert.match(await (await pinned.handle(makeRequest(`${ACME}/auth/login`))).text(), /<h1>Sign in to Acme dashboard<\/h1>/);
-
   const seen = [];
-  const custom = makeDynamicSite(ctx, { renderLoginPage: (params) => (seen.push(params.site), "<p>custom</p>") });
+  const custom = makeSite(ctx, "acme", { renderLoginPage: (params) => (seen.push(params.site), "<p>custom</p>") });
   assert.equal(await loginHtml(custom, ACME), "<p>custom</p>");
   assert.deepEqual(seen, [{ name: "Acme dashboard", host: "acme.example" }]);
 });
@@ -337,7 +407,7 @@ test("a pinned site's page says the same, and a custom renderer is handed the si
 test("a hostile site name cannot break out of the page", async () => {
   const ctx = await setup();
   await ctx.registry.updateNamespace("acme", { name: `<img src=x onerror=alert(1)>` });
-  const html = await loginHtml(ctx.site, ACME);
+  const html = await loginHtml(makeSite(ctx, "acme"), ACME);
   assert.doesNotMatch(html, /<img src=x/);
   assert.match(html, /Sign in to &lt;img src=x onerror=alert\(1\)&gt;/);
 });

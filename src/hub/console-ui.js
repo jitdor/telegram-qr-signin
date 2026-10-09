@@ -259,6 +259,8 @@ td .btn,.act .btn{min-height:32px;padding:0 12px;font-size:.8rem}
 .warn-zone{border-color:color-mix(in srgb,var(--warn) 40%,var(--line));background:linear-gradient(var(--warn-bg),var(--panel) 140px)}
 .danger-zone{border-color:color-mix(in srgb,var(--bad) 32%,var(--line))}.danger-zone>h2 .i{color:var(--bad)}
 .callout{padding:16px 18px;border:1px dashed var(--line-2);border-radius:12px;background:var(--panel-2)}.callout strong{display:block;margin-bottom:2px}.callout ul{margin:4px 0 14px;padding-left:1.2rem}
+.code.key{white-space:pre-wrap;overflow-wrap:anywhere;user-select:all;font-size:.92rem}
+.key-next{margin-top:22px}.key-done{margin-top:18px}
 .modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:6px}
 .mode{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
 .mode h3{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0;font-size:.95rem}

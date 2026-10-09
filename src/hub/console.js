@@ -26,6 +26,8 @@ import {
   cleanLabel,
   cleanName,
   describeUser,
+  generateSiteKey,
+  hashSiteKey,
   normalizeOrigin,
   parseTelegramId,
   parseTelegramIds,
@@ -35,15 +37,14 @@ import {
 const MAX_IDS_PER_SUBMIT = 200;
 const AUDIT_ROWS_SHOWN = 40;
 
-// What the "Use it in your site" block shows: no id in it, because the site finds its own.
-const SITE_SNIPPET = `import { KVLoginStore } from "telegram-qr-signin";
-import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
+// What the "Use it in your site" block shows. The site holds the hub's address and its own key, and
+// nothing else of the hub's: no database, no login store.
+const siteSnippet = (apiUrl) => `import { createSiteAuth } from "telegram-qr-signin/site";
 
 const auth = createSiteAuth({
+  hub: { url: "${apiUrl}", key: env.HUB_KEY },  // the key is made under "Site key"
   botUsername: env.TELEGRAM_BOT_USERNAME,
-  store: new KVLoginStore(env.LOGINS),   // the hub's login store
-  registry: new D1HubStore(env.HUB_DB),  // the hub's database
-  session: { secret: env.SESSION_SECRET },
+  session: { secret: env.SESSION_SECRET },       // this site's own, never shared
 });`;
 
 // The three ways a site can decide who gets in, as the console words them.
@@ -54,7 +55,7 @@ const MODES = {
 };
 
 const OK_MESSAGES = {
-  site_created: "Site added. Point its Worker at this namespace, then grant people access below.",
+  key_missing: "This site has no key yet, so it cannot sign anyone in. Make one under Site key.",
   site_saved: "Site settings saved.",
   origin_added: "URL added. The site can now be served from it.",
   origin_removed: "URL removed. Requests from it are refused from now on.",
@@ -98,6 +99,7 @@ const ERR_MESSAGES = {
   admin_self: "You cannot remove yourself. Ask another super admin.",
   admin_missing: "That super admin no longer exists.",
   confirm_mismatch: "The confirmation did not match, so nothing was deleted.",
+  confirm_key: "To replace the key, type the site's id to confirm. The old key stops working at once, so the site must be given the new one. Nothing was changed.",
   confirm_open: "To open a site to everyone, type its id in the box to confirm. Nothing was changed.",
   bad_mode: "That is not a valid setting.",
   bad_request: "That request could not be processed. Reload the page and try again.",
@@ -123,13 +125,14 @@ const SECURITY_HEADERS = {
  * @param {object} options.registry    A HubStore.
  * @param {number[]} options.rootAdmins  Bootstrap admins: shown, never removable here.
  * @param {string} options.adminPath   e.g. "/admin".
+ * @param {string} options.apiPath     e.g. "/hub-api": where sites call the hub, shown in each site's setup.
  * @param {string} options.secret      Session secret, from which the CSRF key is derived.
  * @param {(approval: {namespace: string, site: object, id: number}) => Promise<boolean>} [options.onApproved]
  *   Called after someone is approved (or granted access while they had a request waiting), to tell
  *   them. Returns whether they were told; the console says so either way.
  * @param {(err: unknown) => void} [options.onError]
  */
-export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secret, onApproved, onError = defaultOnError }) {
+export function createAdminConsole({ auth, registry, rootAdmins, adminPath, apiPath, secret, onApproved, onError = defaultOnError }) {
   const roots = new Set(rootAdmins);
   const authPrefix = `${adminPath}/auth/`;
   const csrfKey = hmacSha256(new TextEncoder().encode("TelegramQrHubCsrfKey"), secret);
@@ -190,6 +193,7 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, secr
       if (c === "grants" && rest.length === 3) return addGrants(ctx, b);
       if (c === "grants" && e === "remove" && rest.length === 5) return removeGrant(ctx, b, d);
       if (c === "access" && rest.length === 3) return setAccess(ctx, b);
+      if (c === "key" && rest.length === 3) return makeKey(ctx, b);
       if (c === "origins" && rest.length === 3) return addOrigin(ctx, b);
       if (c === "origins" && d === "remove" && rest.length === 4) return removeOrigin(ctx, b);
       if (c === "blocks" && rest.length === 3) return addBlocks(ctx, b);
@@ -335,10 +339,11 @@ ${flash(ctx.url)}
     const mode = site.access;
     const open = mode === "anyone";
     const approval = mode === "approval";
-    const [grants, blocks, requests] = await Promise.all([
+    const [grants, blocks, requests, siteKey] = await Promise.all([
       registry.listGrants(namespace),
       registry.listBlocks(namespace),
       approval ? registry.listRequests(namespace) : [], // only an approval site has a queue
+      registry.getSiteKey(namespace),
     ]);
     const base = `${adminPath}/ns/${namespace}`; // namespace already matched NAMESPACE_RE
     const hostOf = (origin) => origin.replace(/^https?:\/\//, "");
@@ -359,6 +364,7 @@ ${flash(ctx.url)}
 <nav class="subnav" aria-label="This site">
   <a href="#settings">${icon("settings")}Settings</a>
   <a href="#urls">${icon("link")}URLs</a>
+  <a href="#key">${icon("key")}Key${siteKey ? "" : ' <span class="n warn">!</span>'}</a>
   <a href="#access">${icon(MODES[mode].icon)}Access</a>
   ${requests.length ? `<a href="#waiting">${icon("bell")}Waiting <span class="n warn">${requests.length}</span></a>` : ""}
   <a href="#people">${icon("users")}People <span class="n">${grants.length}</span></a>
@@ -385,7 +391,7 @@ ${flash(ctx.url)}
     <p class="hint">Switching a site off locks everyone out of it on their next request. Their access is kept for when you switch it back on.</p>`)}
   <details class="snippet">
     <summary>${icon("code")}Use it in your site</summary>
-    <pre class="code">${esc(SITE_SNIPPET)}</pre>
+    <pre class="code">${esc(siteSnippet(`${ctx.url.origin}${apiPath}`))}</pre>
   </details>
 </section>
 
@@ -412,6 +418,22 @@ ${flash(ctx.url)}
       <button class="btn primary">Add URL</button>
     </div>
     <p class="hint">Scheme and host (and port, if not the default) are what count; any path is ignored. Removing a URL stops working for people on it immediately.</p>`)}
+</section>
+
+<section id="key"${siteKey ? "" : ' class="warn-zone"'}>
+  <h2>${icon("key")}Site key ${siteKey ? '<span class="pill on">Set</span>' : '<span class="pill warn">None</span>'}</h2>
+  <p class="lead">${
+    siteKey
+      ? `The site proves who it is to the hub with its key, made ${when(siteKey.createdAt)}. The hub keeps only a fingerprint of it, so it cannot be shown again.`
+      : "This site has no key yet, so it cannot sign anyone in. Make one and put it in the site's secrets."
+  }</p>
+  ${postForm(ctx, `${base}/key`, siteKey
+      ? `<div class="row">
+      <label><span>Type <code>${esc(namespace)}</code> to replace the key</span><input name="confirm" required autocomplete="off" spellcheck="false"></label>
+      <button class="btn danger">Make a new key</button>
+    </div>
+    <p class="hint">The old key stops working at once, so the site is locked out until it has the new one. Do this if the key leaked.</p>`
+      : '<div class="row"><button class="btn primary">Make a key</button></div>')}
 </section>
 
 <section id="access"${open ? ' class="warn-zone"' : ""}>
@@ -568,7 +590,8 @@ ${
     return page("Add a site", body, ctx);
   }
 
-  async function createSite({ form, session }) {
+  async function createSite(ctx) {
+    const { form, session } = ctx;
     const namespace = String(form.get("namespace") ?? "").trim();
     try {
       assertSiteNamespace(namespace);
@@ -587,7 +610,42 @@ ${
     }
     if (!created) return redirect(adminPath, { err: "site_exists" });
     await audit(session, "site.create", namespace, `${name}; ${origin}`);
-    return redirect(`${adminPath}/ns/${namespace}`, { ok: "site_created" });
+    return keyPage(ctx, namespace, name, await issueKey(session, namespace, "created with the site"), true);
+  }
+
+  /** Makes a new key for a site and returns it. The registry keeps only a hash; the key is shown once, by the caller. */
+  async function issueKey(session, namespace, why) {
+    const key = generateSiteKey(namespace);
+    await registry.setSiteKey(namespace, await hashSiteKey(key));
+    await audit(session, "site.key", namespace, why); // the key itself never goes in the log
+    return key;
+  }
+
+  /** The one place a site key is ever shown. A page of its own, never a redirect, so it is not in a URL or in history. */
+  async function keyPage(ctx, namespace, name, key, fresh) {
+    ctx.sites = await registry.listNamespaces();
+    const apiUrl = `${ctx.url.origin}${apiPath}`;
+    const body = `
+<p class="crumb"><a href="${adminPath}/ns/${namespace}">&larr; ${esc(name)}</a></p>
+<section>
+  <h2>${icon("key")}${fresh ? "Site added: here is its key" : "A new key for this site"}</h2>
+  <p class="lead">This is the only time the key is shown. Put it in the site's secrets now (as <code>HUB_KEY</code>); the hub keeps only a fingerprint and cannot show it again. ${fresh ? "" : "<strong>The old key stopped working the moment this one was made.</strong>"}</p>
+  <pre class="code key" id="key">${esc(key)}</pre>
+  <p class="hint">The key lets whoever holds it start sign-ins for this site, ask whether someone may sign in, and block people on this site's list. It reads nothing else the hub knows. If it leaks, make a new one.</p>
+  <h3 class="card-h key-next">${icon("code")}In the site</h3>
+  <pre class="code">${esc(siteSnippet(apiUrl))}</pre>
+  <div class="row key-done"><a class="btn primary" href="${adminPath}/ns/${namespace}">Done, take me to the site</a></div>
+</section>`;
+    return page(fresh ? "Site added" : "New site key", body, ctx, 200, namespace);
+  }
+
+  async function makeKey(ctx, namespace) {
+    const site = await registry.getNamespace(namespace);
+    if (!site) return redirect(adminPath, { err: "site_missing" });
+    if (String(ctx.form.get("confirm") ?? "").trim() !== namespace && (await registry.getSiteKey(namespace))) {
+      return redirect(`${adminPath}/ns/${namespace}`, { err: "confirm_key" });
+    }
+    return keyPage(ctx, namespace, site.name, await issueKey(ctx.session, namespace, "made a new key"), false);
   }
 
   async function updateSite({ form, session }, namespace) {

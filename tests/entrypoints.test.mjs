@@ -64,6 +64,28 @@ test("the hub is its own entry point: nothing else loads it, and it loads neithe
   assert.ok(files.includes("hub/console.js") && files.includes("hub/d1-store.js"));
 });
 
+test("a site's entry point is small: it loads none of the hub's console, stores or API, nor OIDC or Durable Objects", () => {
+  const files = reachable("src/hub/site.js");
+  for (const heavy of ["hub/console.js", "hub/console-ui.js", "hub/d1-store.js", "hub/store.js", "hub/api.js", "hub/hub.js", "do.js"]) {
+    assert.ok(!files.includes(heavy), `${heavy} must not be pulled into a site`);
+  }
+  assert.ok(!files.some((f) => f.startsWith("oidc/")));
+  assert.ok(files.includes("hub/client.js") && files.includes("provider.js"));
+});
+
+test("package.json exports the site entry point", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  assert.deepEqual(pkg.exports["./site"], { types: "./types/site.d.ts", default: "./src/hub/site.js" });
+  assert.equal(pkg.exports["./migrations/hub-d1-upgrade-2.0.sql"], "./migrations/hub-d1-upgrade-2.0.sql");
+  assert.equal(pkg.version, "2.0.0");
+});
+
+test("the site entry point can be imported by its package name, as a site would", async () => {
+  const site = await import("telegram-qr-signin/site");
+  assert.equal(typeof site.createSiteAuth, "function");
+  assert.equal(typeof site.HubError, "function");
+});
+
 test("package.json exports the hub entry point and its migration", () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(pkg.exports["./hub"], { types: "./types/hub.d.ts", default: "./src/hub/index.js" });
@@ -74,7 +96,7 @@ test("package.json exports the hub entry point and its migration", () => {
 test("the hub entry point exports what its types and docs promise", async () => {
   const mod = await import("../src/hub/index.js");
   assert.deepEqual(Object.keys(mod).sort(), [
-    "ADMIN_NAMESPACE", "D1HubStore", "MemoryHubStore", "NAMESPACE_RE", "OriginInUseError", "createHub", "createSiteAuth",
+    "ADMIN_NAMESPACE", "D1HubStore", "HubError", "MemoryHubStore", "NAMESPACE_RE", "OriginInUseError", "createHub", "createSiteAuth",
     "hubGate", "parseRootAdmins", "parseTelegramId", "parseTelegramIds", "superAdminGate",
   ]);
   const types = readFileSync(join(ROOT, "types", "hub.d.ts"), "utf8");

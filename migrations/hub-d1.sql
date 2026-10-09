@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS hub_requests (
   PRIMARY KEY (namespace, telegram_id)
 );
 
+-- How a site proves who it is to the hub's API: a key made in the console and shown once. Only a
+-- SHA-256 of it is stored, so this table cannot be turned back into working keys. One per site;
+-- making a new one replaces it.
+CREATE TABLE IF NOT EXISTS hub_site_keys (
+  namespace TEXT PRIMARY KEY,
+  key_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 -- Every change made in the console, newest last. Pruned by the store to its most recent entries.
 CREATE TABLE IF NOT EXISTS hub_audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

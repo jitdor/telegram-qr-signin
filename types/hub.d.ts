@@ -109,7 +109,11 @@ export interface HubStore {
   addOrigin(namespace: string, url: string): Promise<boolean>;
   /** True if removed; false if absent, or if it is the site's only origin (a site always keeps one). */
   removeOrigin(namespace: string, url: string): Promise<boolean>;
-  /** Switches the site off first, then removes its grants, blocks and requests. */
+  /** Stores a hash of the site's key (see `generateSiteKey`, `hashSiteKey`). False if there is no such site. */
+  setSiteKey(namespace: string, hash: string): Promise<boolean>;
+  getSiteKey(namespace: string): Promise<{ hash: string; createdAt: number } | null>;
+  removeSiteKey(namespace: string): Promise<boolean>;
+  /** Switches the site off first, then removes its grants, blocks, requests and key. */
   deleteNamespace(namespace: string): Promise<boolean>;
 
   /** The one call a gate makes: one query per guarded request. */
@@ -159,7 +163,11 @@ export interface D1HubStore extends HubStore {}
 export interface HubConfig {
   botToken?: string;
   botUsername: string;
-  /** The login store the sites share. */
+  /**
+   * The hub's own login store. Sites never see it: they start and collect sign-ins through the API.
+   * Use a strongly consistent one (a Durable Object, or D1): KV's eventual consistency can delay a
+   * confirmed scan by tens of seconds.
+   */
   store: LoginStore;
   registry: HubStore;
   /** Bootstrap super admins — "111,222" or an array. At least one. Not removable from the console. */
@@ -170,6 +178,8 @@ export interface HubConfig {
   webhookSecret?: string;
   webhookPath?: string;
   adminPath?: string;
+  /** Where sites call the hub. Default "/hub-api"; a site's `hub.url` is this path on the hub's address. */
+  apiPath?: string;
   /**
    * The console's public URL, such as "https://hub.example.com/admin", for the link in the message
    * super admins get when someone asks to join a site. Defaults to the address Telegram calls the
@@ -193,7 +203,7 @@ export interface Hub {
   /** Feed one Telegram update in directly. Resolves true if it was a sign-in. */
   handleUpdate(update: any): Promise<boolean>;
   rootAdmins: number[];
-  paths: { webhook: string; admin: string };
+  paths: { webhook: string; admin: string; api: string };
   adminAuth: TelegramQrAuth;
   registry: HubStore;
   store: LoginStore;
@@ -201,43 +211,56 @@ export interface Hub {
 
 export declare function createHub(config: HubConfig): Hub;
 
-export interface SiteAuthConfig extends Omit<TelegramQrAuthConfig, "namespace" | "authorize" | "botToken" | "session"> {
-  registry: HubStore;
+export interface SiteHubConfig {
+  /** The hub's API address, as the console shows it: "https://auth.example.com/hub-api". https, except for localhost. */
+  url: string;
+  /** This site's key, made in the console (`tqk_<site>_<64 hex>`). Keep it in a secret. It says which site this is. */
+  key: string;
+  /** Replaces global `fetch` (a Cloudflare service binding's, a test double). */
+  fetch?: typeof fetch;
+  /** How long to wait for the hub before treating it as unreachable. Default 5000. */
+  timeoutMs?: number;
   /**
-   * The id this site was registered under. Leave it out and the site works it out from the URL each
-   * request arrives at (the URL must be registered in the console, to one site). Pass it to pin the
-   * site instead — needed for a site registered before URLs were bound.
+   * How long a "yes" from the hub is reused for the same person. Default 0: ask on every request, so
+   * revoking someone in the console applies to their very next request. A "no" is never cached.
    */
-  namespace?: string;
+  checkCacheSeconds?: number;
+}
+
+export interface SiteAuthConfig extends Omit<TelegramQrAuthConfig, "namespace" | "store" | "authorize" | "botToken" | "session"> {
+  /** Everything a site holds of the hub. There is no registry, no login store and no bot token. */
+  hub: SiteHubConfig;
   /** Required: a site has no bot token to fall back on. Give each site its own. */
   session: NonNullable<TelegramQrAuthConfig["session"]> & { secret: string };
   /** Optional extra gate, ANDed with the hub's. Needs `botToken` or `telegram`. */
   authorize?: Gate;
   /** Not needed unless an extra gate calls Telegram. */
   botToken?: string;
-  recordRequests?: boolean | (() => boolean);
-  /** Registry failures. Defaults to console.error. */
+  /** Hub failures (unreachable, wrong key). Defaults to console.error. */
   onError?: (err: unknown) => void;
 }
 
 /**
- * What `createSiteAuth` returns when it is not given a namespace: the site-facing half of
- * TelegramQrAuth, with each call routed to whichever site the request's origin is registered to.
- * Requests at an unregistered origin are refused (403), or answered 503 if the registry cannot be
- * read. The session cookie defaults to the name "site_session".
+ * A site's auth: the same `handle` / `guard` / `poll` as `createTelegramQrAuth`, but every question
+ * about sign-ins and access goes to the hub over HTTPS. If the hub cannot be reached, visitors get
+ * "try again" (503) and nobody is signed out.
  */
-export interface SiteAuth
-  extends Pick<TelegramQrAuth, "basePath" | "paths" | "cookieName" | "tokenTtlSeconds" | "getSession" | "verifyAssertion" | "logoutResponse" | "guard" | "handle" | "poll" | "scan" | "store" | "telegram" | "session" | "authorize"> {
-  /** The namespace the request's origin is registered to, or null. Handy for keying your own data per site. */
-  namespaceFor(request: Request): Promise<string | null>;
-  /** Needs `options.request` to know which site it is for; rejects if that origin is not registered. */
-  beginLogin(options: { request: Request }): Promise<BeginLoginResult>;
-  loginPage(options: { request: Request; error?: string; redirectTo?: string }): Promise<string>;
-  loginResponse(options: { request: Request; error?: string; status?: number; clearCookie?: boolean; redirectTo?: string }): Promise<Response>;
+export interface SiteAuth extends TelegramQrAuth {
+  /** The site's own moderation, for a site open to anyone: refuse this person, on this site's list only. */
+  block(id: number, label?: string): Promise<{ ok: true; added: boolean }>;
+  /** Undo `block`. */
+  unblock(id: number): Promise<{ ok: true; removed: boolean }>;
 }
 
-export declare function createSiteAuth(config: SiteAuthConfig & { namespace: string }): TelegramQrAuth;
-export declare function createSiteAuth(config: SiteAuthConfig & { namespace?: undefined }): SiteAuth;
+export declare function createSiteAuth(config: SiteAuthConfig): SiteAuth;
+
+/** The hub did not answer, or refused. `code` says which; `transient` means trying again may work. */
+export declare class HubError extends Error {
+  code: "hub_unreachable" | "hub_unavailable" | "unauthorized" | "origin_not_allowed" | "namespace_disabled" | "refused" | string;
+  /** The HTTP status, or 0 if the hub never answered. */
+  status: number;
+  readonly transient: boolean;
+}
 
 /** Thrown when a URL is given to a site but already belongs to another. */
 export declare class OriginInUseError extends Error {

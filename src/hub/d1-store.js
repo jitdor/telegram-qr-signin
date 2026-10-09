@@ -44,6 +44,7 @@ export class D1HubStore {
       blocks: `${prefix}blocks`,
       requests: `${prefix}requests`,
       audit: `${prefix}audit`,
+      keys: `${prefix}site_keys`,
     };
   }
 
@@ -174,7 +175,33 @@ export class D1HubStore {
     await this.db.prepare(`DELETE FROM ${this.t.grants} WHERE namespace = ?1`).bind(namespace).run();
     await this.db.prepare(`DELETE FROM ${this.t.blocks} WHERE namespace = ?1`).bind(namespace).run();
     await this.db.prepare(`DELETE FROM ${this.t.requests} WHERE namespace = ?1`).bind(namespace).run();
+    await this.db.prepare(`DELETE FROM ${this.t.keys} WHERE namespace = ?1`).bind(namespace).run();
     const res = await this.db.prepare(`DELETE FROM ${this.t.namespaces} WHERE namespace = ?1`).bind(namespace).run();
+    return res.meta.changes > 0;
+  }
+
+  // --- Site keys -------------------------------------------------------------------------------
+
+  async setSiteKey(namespace, hash) {
+    // INSERT ... SELECT so a key is only ever written for a site that exists.
+    const res = await this.db
+      .prepare(
+        `INSERT INTO ${this.t.keys} (namespace, key_hash, created_at)
+         SELECT namespace, ?2, ?3 FROM ${this.t.namespaces} WHERE namespace = ?1
+         ON CONFLICT (namespace) DO UPDATE SET key_hash = excluded.key_hash, created_at = excluded.created_at`
+      )
+      .bind(namespace, String(hash), nowSeconds())
+      .run();
+    return res.meta.changes > 0;
+  }
+
+  async getSiteKey(namespace) {
+    const row = await this.db.prepare(`SELECT key_hash, created_at FROM ${this.t.keys} WHERE namespace = ?1`).bind(namespace).first();
+    return row ? { hash: row.key_hash, createdAt: row.created_at } : null;
+  }
+
+  async removeSiteKey(namespace) {
+    const res = await this.db.prepare(`DELETE FROM ${this.t.keys} WHERE namespace = ?1`).bind(namespace).run();
     return res.meta.changes > 0;
   }
 

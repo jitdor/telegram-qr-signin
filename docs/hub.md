@@ -13,23 +13,27 @@ own bot, or one place has to know every site and route each `/start` to the righ
 that place, and it adds the missing piece — a list of who may enter which site — so the access list
 lives in one database and a person is added or removed in one screen instead of one config per site.
 
+## One authority, and sites that hold nothing
+
+The hub is the **single authority**. It alone holds the bot token, the sign-in records and the access
+list. A site holds exactly one thing from it, its **key**, and asks the hub everything over HTTPS:
+
 ```
-        browser A ──▶ site A (namespace "acme") ─┐                    ┌──▶ D1 registry
-        browser B ──▶ site B (namespace "wiki") ─┤  login store (KV)  │     sites · grants
-                                                 │  ◀── scan ──┐      │     super admins · audit
-   phone scans QR ──▶ Telegram ──▶ hub webhook ──┴─────────────┘      │
-                                      │  1. which site? ("acme")      │
-                                      │  2. does this person hold a   │
-                                      │     grant for it?  ◀──────────┘
-                                      └─▶ 3. if so, confirm the scan
+   browser ──▶ site ──── HTTPS + key ────▶ hub ◀── webhook ── Telegram ◀── phone scans QR
+              (holds only                  │
+               the hub's address           ├─ starts and keeps the sign-in
+               and its key)                ├─ says who scanned
+                                           └─ says yes or no: may this person come in, right now?
 ```
 
-Three Workers' worth of roles, but only two things are shared between them:
-
-| Shared | What it is | Who writes it |
-| --- | --- | --- |
-| **Login store** (D1, recommended, or a Durable Object) | The 10-minute hand-off record for a scan | Sites mint, the hub confirms |
-| **Registry** (`D1HubStore`) | Sites, grants, blocks, super admins, requests, audit log | The hub's console. A site writes it only if you make its moderation call `addBlock` (see [Open sites](#open-sites)) |
+- **Nothing is shared.** There is no common database, login store or KV namespace. A site has no
+  binding to the hub's data, so a compromised site can start sign-ins and ask questions *for itself*
+  and nothing else: it cannot read the access list, the other sites, or the admins.
+- **A site can be anywhere.** The API is plain HTTPS and JSON, so a site can be on Cloudflare, another
+  cloud, a VPS or a laptop, in any runtime with `fetch`.
+- **The hub is the single point of failure, on purpose.** If it is down, nobody can start a sign-in,
+  and signed-in people are asked to try again on their next request. Nobody is signed out because of
+  an outage (see [When the hub is down](#when-the-hub-is-down)).
 
 **Sites never hold the bot token.** Only the hub talks to Telegram, so a compromised site cannot
 impersonate the bot or message your users.
@@ -39,16 +43,19 @@ impersonate the bot or message your users.
 **1. The hub Worker** — [`examples/hub/hub-worker.js`](../examples/hub/hub-worker.js):
 
 ```js
-import { D1LoginStore } from "telegram-qr-signin";
+import { DurableObject } from "cloudflare:workers";
+import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-signin/do";
 import { createHub, D1HubStore } from "telegram-qr-signin/hub";
+
+export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}   // the sign-in records
 
 export default {
   fetch: (request, env) =>
     createHub({
       botToken: env.TELEGRAM_BOT_TOKEN,
       botUsername: env.TELEGRAM_BOT_USERNAME,
-      store: new D1LoginStore(env.HUB_DB),       // the same database as the registry
-      registry: new D1HubStore(env.HUB_DB),
+      store: new DoLoginStore(env.QRAUTH_DO),    // in-flight sign-ins: strongly consistent
+      registry: new D1HubStore(env.HUB_DB),      // the access list: durable
       superAdmins: env.SUPER_ADMINS,             // "123456789,987654321"
       sessionSecret: env.CONSOLE_SESSION_SECRET, // its own secret, not the bot token
       webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
@@ -59,52 +66,73 @@ export default {
 ```bash
 wrangler d1 create hub
 wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/hub-d1.sql
-wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql   # the login table
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<hub>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 ```
 
-**2. Open `https://<hub>/admin`** and scan the QR with a Telegram account whose numeric id is in
-`superAdmins`. Add a site: enter its display name and URL (`Internal docs`, `https://docs.example.com`), and the
-console proposes an id (`internal-docs`) that you can edit before saving. Grant people access.
+The sign-in records live in a **Durable Object** (wrangler binds it: `durable_objects` and a
+`new_sqlite_classes` migration, as in the example's `wrangler.jsonc`). It is strongly consistent, so a
+confirmed scan is visible at once and one scan is one sign-in, and it creates its own tables, so
+there is nothing to migrate. **Do not use KV for this store.** It is eventually consistent and can
+leave a confirmed scan unseen for tens of seconds. D1 (`D1LoginStore`, with `migrations/d1.sql`) is
+the other good choice. Either way only the hub touches it.
 
-**3. Each site** — [`examples/hub/site-worker.js`](../examples/hub/site-worker.js). It is
-`createTelegramQrAuth` with the hub's gate already wired in:
+**2. Open `https://<hub>/admin`** and scan the QR with a Telegram account whose numeric id is in
+`superAdmins`. Add a site: enter its display name and URL (`Internal docs`,
+`https://docs.example.com`), and the console proposes an id (`internal-docs`) that you can edit
+before saving. **The next page shows the site's key, once.** Put it in the site's secrets.
+
+**3. Each site** — [`examples/hub/site-worker.js`](../examples/hub/site-worker.js) on Workers,
+[`examples/hub/site-node.mjs`](../examples/hub/site-node.mjs) on Node. It is `createTelegramQrAuth`
+with the hub standing in for every piece of shared state:
 
 ```js
-import { D1LoginStore } from "telegram-qr-signin";
-import { createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
+import { createSiteAuth } from "telegram-qr-signin/site";
 
 const auth = createSiteAuth({
-  botUsername: env.TELEGRAM_BOT_USERNAME,  // no bot token, and no site id: see below
-  store: new D1LoginStore(env.HUB_DB),     // the SAME database as the hub
-  registry: new D1HubStore(env.HUB_DB),    // and the same binding for the registry
-  session: { secret: env.SESSION_SECRET }, // required, and different for every site
+  hub: { url: env.HUB_URL, key: env.HUB_KEY },  // https://<hub>/hub-api, and the key from step 2
+  botUsername: env.TELEGRAM_BOT_USERNAME,        // no bot token
+  session: { secret: env.SESSION_SECRET },       // required, and different for every site
 });
 
-const handled = await auth.handle(request);
+const handled = await auth.handle(request);      // /auth/login, /auth/poll, /auth/logout, …
 if (handled) return handled;
-const gate = await auth.guard(request);    // cookie + a live registry check, every request
+const gate = await auth.guard(request);          // cookie + a live question to the hub, every request
 if (!gate.ok) return gate.response;
 ```
 
+**4. Grant people access** under the site in the console, or let them ask: see
+[Who gets in](#who-gets-in). [`docs/integrating-a-site.md`](integrating-a-site.md) is the
+step-by-step guide for whoever wires up a site.
+
 The sign-in page says which site it is: "Sign in to Internal docs", with the host it is served from
-(`docs.example.com`) under the heading. The name comes from the registry, so a rename in the console
-shows on the next load; if the registry cannot be read the page still shows the host. Set
-`branding.heading` to use your own heading instead (the host is still shown). The page is the site
-describing itself, so it helps people notice the wrong environment, but it is not a defence: a fake
-page can say anything. The bot's confirmation message, which a page cannot forge, is the check.
+(`docs.example.com`) under the heading. The name comes from the hub and is remembered for half a
+minute, so a rename in the console shows soon; if the hub cannot be asked the page still shows the
+host. Set `branding.heading` to use your own heading instead (the host is still shown). The page is
+the site describing itself, so it helps people notice the wrong environment, but it is not a defence:
+a fake page can say anything. The bot's confirmation message, which a page cannot forge, is the check.
 
-The site does not say which site it is. On each request it looks up the URL it was reached at in the
-registry and acts as the site that URL is registered to, so there is no id to copy into the code and
-nothing to drift out of step with the console. At a URL that is not registered it refuses everything:
-no QR, no login page, no session. (Costs one extra registry query per request. Pass `namespace` to
-pin the site instead and skip it. Everything here works the same either way.)
-
-The one binding (`HUB_DB`) points at the hub's database — copy its id into the site's
-`wrangler.jsonc` ([`site-wrangler.jsonc`](../examples/hub/site-wrangler.jsonc)). Everything else
+The site does not say which site it is. **The key does**: it reads `tqk_<site id>_<secret>`, so there
+is no id to copy into code and nothing to drift out of step with the console. Everything else
 `createTelegramQrAuth` takes (`branding`, `claims`, `redirectTo`, `qrOrigin`, …) works unchanged.
 To also require, say, group membership, pass `authorize: chatMember({ chatId })` and a `botToken`:
 it is ANDed with the hub's check.
+
+## Site keys
+
+A key is how a site proves who it is to the hub: `Authorization: Bearer tqk_<site>_<64 hex>`.
+
+- **Made in the console**, when you add a site and from the site's page (*Site key*). It is shown
+  **once**, on a page of its own and never in a URL; after that the hub holds only a SHA-256 of it,
+  so a copy of its database cannot be turned back into working keys.
+- **One per site.** Making a new key replaces the old one **at once**, so the site is locked out until
+  it has the new one. Replacing needs the site's id typed back. Do it if a key leaks.
+- **A site's key opens only that site.** The hub works out which site is asking from the key, never
+  from the request, so a site sees only its own sign-ins and its own block list. There is no call to
+  read the access list, another site, or the admins.
+- A site with no key (one added by hand, or from before 2.0) cannot sign anyone in; the console flags
+  it on the site's page.
+- **Keep it in a secret** (`wrangler secret put HUB_KEY`), not in the repository. The key is logged
+  nowhere by the hub; the audit log records that a key was made, not what it was.
 
 ## The console
 
@@ -135,6 +163,7 @@ Server-rendered, no JavaScript, no external requests. Everything is behind the s
 | Area | What a super admin can do |
 | --- | --- |
 | **Sites** | Add a site (display name and the URL it is served from, then confirm its suggested id), rename it, switch sign-in off and on, delete it |
+| **Site key** | Make a site's key (shown once, never again) or replace it. The site uses it to talk to the hub |
 | **Site URLs** | Add or remove the origins a site is served from — the namespace works only there |
 | **Who can sign in** | Choose one of [three modes](#who-gets-in): invite only (the default), approval required, or [open to anyone](#open-sites) with a Telegram account |
 | **People with access** | Grant by Telegram id (paste many at once, with an optional note), revoke |
@@ -172,9 +201,8 @@ knows which site a scan is for, and the stable key its access list hangs off. It
 URL on purpose. A URL can change, or gain a `workers.dev` twin, and a site can have several, but
 people's access must survive that; the id is what stays put.
 
-**The site's code never needs it.** A site finds its own id from the URL it is served at, so the id
-lives in one place, the registry. You only meet it in the console, in the QR link, and if you pin a
-site in code.
+**The site's code never needs it.** The site's key already says which site it is, so the id lives in
+one place, the registry. You only meet it in the console and in the QR link.
 
 You rarely need to invent one. When you add a site the console proposes an id from the display name
 (`Internal docs` → `internal-docs`), or from the URL's first label if there is no name
@@ -191,11 +219,11 @@ that borrowed production's configuration. So every site is **bound to the origin
 served from** (scheme, host and port; `https://docs.example.com`, not a path). It is required to add a
 site, and enforced in two places:
 
-- **At every request to the site.** The site's gate compares the origin the request arrived at with
-  the registered list. A visitor, a session cookie or a poll arriving at any other origin gets
-  `origin_not_allowed` and nothing from this registry — no grant, and no open-site access either. The
-  same cookie secret does not help: a copy of the site on an unregistered URL cannot use the access
-  list.
+- **When a site asks.** Every call that starts a sign-in or asks "may this person come in" carries the
+  origin the visitor reached the site at, and the hub compares it with the registered list. A visitor,
+  a session cookie or a poll arriving at any other origin gets `origin_not_allowed` and nothing from
+  the hub: no sign-in, no yes, and no open-site access either. The same key does not help: a copy of
+  the site on an unregistered URL cannot start sign-ins.
 - **At the scan.** The QR records where it was shown. The hub compares that with the site's origins
   before it confirms anything, and tells the person when a code came from a site that is not
   registered for that namespace. The code is not spent, and nothing is remembered about it.
@@ -206,10 +234,9 @@ What the origin means in practice:
   (except for `localhost` and `127.0.0.1`, so you can register a dev server), and `www.` is a
   different origin. If people can reach the site at both a custom domain and its `workers.dev`
   address, register both.
-- **A URL belongs to exactly one site**, because a site finds its id from its URL. Giving a URL to a
-  second site is refused (in the console and by the registry). If two sites ever do claim one URL —
-  two admins racing — the site at that URL refuses to run until one lets go, rather than guessing
-  which it is. Two services on one origin under different paths are therefore one site.
+- **A URL belongs to exactly one site.** Giving a URL to a second site is refused (in the console and
+  by the registry), so an address always means one site. Two services on one origin under different
+  paths are therefore one site.
 - A site can have up to ten, so a custom domain, its `workers.dev` address and a preview can coexist.
   The console never lets you remove the last one; add the new URL first.
 - Removing a URL takes effect on the next request from it.
@@ -220,11 +247,11 @@ What the origin means in practice:
 - A site must record where each QR is shown, which is the default; `createSiteAuth` refuses
   `captureClient: false` for that reason.
 
-**What this does not do.** The origin on a QR is recorded by the site that mints it, and every site
-holds the shared login store and registry, so a *malicious* Worker with those bindings could write
-whatever origin it liked. Binding stops mistakes — staging on production's namespace, a copy deployed
-to the wrong place, a site nobody registered — and makes each one visible; it is not a defence against
-a hostile site you have already given the shared bindings. Keep those bindings to Workers you trust.
+**What this does not do.** The origin is reported by the site, so a *malicious* site holding its own
+key could report any of its own registered origins (and no other site's: it can only act as the site
+its key belongs to). Binding stops mistakes — staging on production's key, a copy deployed to the
+wrong place, a site nobody registered — and makes each one visible; it is not a defence against a
+hostile holder of a site's key. Keep keys in secrets, and make a new one if one leaks.
 
 ## Who gets in
 
@@ -272,10 +299,8 @@ is there again if you switch back.
 A site can also let in **anyone with a Telegram account**, for a public site such as a forum. It is a
 setting on one site, and sites are invite-only until you change it.
 
-```js
-await registry.createNamespace({ namespace: "forum", name: "The forum", origins: ["https://forum.example.com"], access: "anyone" });
-// or, in the console: the site's page → Who can sign in → Open to anyone
-```
+In the console: the site's page → Who can sign in → Open to anyone. (From code, on the hub:
+`registry.createNamespace({ …, access: "anyone" })`.)
 
 What changes, and what does not:
 
@@ -297,9 +322,9 @@ Telegram user id, a display name and an optional username. Everything after that
   makes throwaway signups harder, but it does not stop abuse.
 - The hub **does not know who has signed up** to an open site, so it cannot list them. To ban
   someone, take the id from your own member record and block it in the console — or, from the site's
-  own moderation tools, call `registry.addBlock({ namespace, id, label })`. (That means the site
-  holds write access to the registry. Fine for a site you run; it is one more reason this mode is for
-  sites you control. For someone else's site, use the [OIDC provider](../README.md#running-a-public-identity-provider).)
+  own moderation tools, call `auth.block(id, "reason")` (and `auth.unblock(id)`). That is one call to
+  the hub with the site's key, and it can only ever touch **this site's** block list: the key opens
+  nothing else. For someone else's site, use the [OIDC provider](../README.md#running-a-public-identity-provider).
 
 ### Blocks
 
@@ -333,37 +358,38 @@ ask for access.
 
 - **Sites use the default token size.** The hub recognises a scan by its shape (`<namespace>_<32 hex
   characters>`); a site that sets a custom `tokenBytes` would not be recognised.
-- **One URL, one site.** A site works only at its registered URLs and only ever acts as the site they
-  are registered to, so a second site cannot borrow it. Two URLs that genuinely share an audience can
-  be registered to one site.
-- **The session cookie is named `site_session`** for a site that resolves its own id (the name cannot
-  depend on an id not yet known). It is per origin, so sites cannot collide; change it with
-  `session.cookieName`. A site pinned with `namespace` keeps `<namespace>_session`.
-- **Deleting a site deletes its grants and its block list.** Re-adding the same namespace later
-  starts with nobody, and with nobody banned.
+- **One URL, one site.** A site works only at its registered URLs and only ever acts as the site its
+  key belongs to. Two URLs that genuinely share an audience can be registered to one site.
+- **The session cookie is named `<site id>_session`**, per origin, so sites cannot collide; change it
+  with `session.cookieName`. It is signed with the site's own `session.secret`, which the hub never
+  sees: signing a person in does not give the hub, or another site, the means to forge a session.
+- **Deleting a site deletes its grants, its block list and its key.** Re-adding the same namespace
+  later starts with nobody, with nobody banned, and with no key.
 - **Switching a site off keeps its grants.** Nobody can sign in, and open sessions fail on their next
   request; switching it back on restores everyone.
 - **Only approval sites remember scans, and only real QR codes.** A request is recorded only if the
   scan carried a token that a site actually minted and is still pending; messaging the bot made-up
   payloads is refused without leaving a trace. Requests are capped per site (100, newest kept), so
   the list cannot be flooded into growing without bound. Invite-only and open sites record nothing.
-- **A registry outage is retryable, not a sign-out.** If the database cannot be read, sites answer
-  `503` and the hub asks the person to scan again; nobody's cookie is cleared on the strength of an
-  outage. Bootstrap admins can still reach the console.
-- **Use D1 for the login store.** The hub's registry is D1 already, so `new D1LoginStore(env.HUB_DB)`
-  in the hub and in every site needs no extra resource, only the login table in the same database
-  (`migrations/d1.sql`). D1 is strongly consistent, so a scan reaches the site's browser on its next
-  poll and one scan is one sign-in. KV is eventually consistent: a confirmation can take tens of
-  seconds to appear at the site, which on a sign-in page is a long wait.
+- **An outage is retryable, not a sign-out.** See [When the hub is down](#when-the-hub-is-down).
+  Bootstrap admins can still reach the console if the registry is unreadable.
+- **The login store should be strongly consistent.** A Durable Object (as in the example) or D1, never
+  KV: KV is eventually consistent, and a confirmation can take tens of seconds to appear, which on a
+  sign-in page is a long wait. Only the hub touches it, so it is one binding in one Worker.
+- **Every guarded request costs the site one call to the hub.** That is what makes revocation take
+  effect on the very next request. If that is too much, `hub: { checkCacheSeconds: 10 }` reuses a
+  "yes" for that long (a "no" is never reused), at the price of revocation taking up to that long.
 - **Other bot features.** The hub owns the webhook, so a bot that also does other things should
   pass those updates through `onUnhandled`, or call `hub.handleUpdate(update)` from the framework
   that already owns the webhook — it resolves `true` for a sign-in and `false` for anything else.
 
 ## What it does not do
 
-- **No rate limiting.** The webhook is behind Telegram's secret token, but `/admin/auth/*` and the
-  sites' sign-in pages mint tokens for anyone who asks. Put Cloudflare rate limiting in front, as
-  you would for any sign-in page.
+- **No rate limiting.** The webhook is behind Telegram's secret token, and the API behind site keys,
+  but `/admin/auth/*` and the sites' sign-in pages mint tokens for anyone who asks. Put rate limiting
+  in front of the hub and the sites, as you would for any sign-in page.
+- **No second key per site.** Replacing a key is immediate, so a rotation has a gap while the site is
+  given the new one. Schedule it, or make the new key and deploy the site straight after.
 - **No per-site administrators.** All super admins can change everything. If a site's owners should
   manage their own people, that is a separate role this does not model.
 - **No groups, expiry or bulk import.** A grant is a Telegram id for a site; it lasts until revoked.
@@ -400,7 +426,7 @@ both built-in stores pass.
 createHub({
   botToken,                  // required unless `telegram` is given
   botUsername,               // required, without the "@"
-  store,                     // required — the login store the sites share
+  store,                     // required — the hub's own login store (a Durable Object or D1; not KV)
   registry,                  // required — a HubStore (D1HubStore on Workers)
   superAdmins,               // required, at least one: "111,222" or [111, 222]
   sessionSecret,             // required — the console's cookie secret; not the bot token
@@ -408,6 +434,8 @@ createHub({
   webhookSecret,             // the secret_token given to setWebhook — set it
   webhookPath: "/telegram/webhook",
   adminPath: "/admin",
+  apiPath: "/hub-api",       // where sites call the hub; a site's `hub.url` is this on the hub's address
+  adminUrl,                  // the console's public URL, for the link in "someone asked to join" messages
   adminSessionSeconds: 28800,
   qrOrigin,                  // optional, as for createTelegramQrAuth
   branding,                  // optional overrides for the console's sign-in page
@@ -425,15 +453,74 @@ createHub({
 | `handleUpdate(update)` | One update from a bot framework you already run; resolves `true` for a sign-in |
 | `adminAuth`, `registry`, `store` | Escape hatches |
 
-`createSiteAuth` takes everything `createTelegramQrAuth` does, plus `registry` and a required
-`session.secret`; `botToken` and `namespace` are optional. Without `namespace` it returns the
-site-facing half of the usual object (`handle`, `guard`, `poll`, `scan`, `beginLogin`, `loginPage`,
-`loginResponse`, `logoutResponse`, `getSession`, `verifyAssertion`, `authorize`) plus
-`namespaceFor(request)`, which tells you the id a request resolved to — handy for keying your own
-data per site. Bot-side members (`handleStart`, `confirm`) and the link helpers (`deepLinkFor`…)
-need a namespace and live on the hub; use the `payload` that `beginLogin` returns. `hubGate({ registry, namespace })` and
-`superAdminGate({ registry, rootAdmins })` are the two gates underneath, for composing by hand with
-`every` / `some`.
+### `createSiteAuth`
+
+```js
+import { createSiteAuth } from "telegram-qr-signin/site";   // or "telegram-qr-signin/hub"
+
+createSiteAuth({
+  hub: {
+    url,                     // required — the hub's API address, https://<hub>/hub-api (https; http only for localhost)
+    key,                     // required — this site's key from the console
+    fetch,                   // replaces global fetch (a Cloudflare service binding's, a test double)
+    timeoutMs: 5000,         // how long before the hub counts as unreachable
+    checkCacheSeconds: 0,    // reuse a "yes" for this long; 0 asks on every request
+  },
+  botUsername,               // required
+  session: { secret },       // required, and different for every site
+  // everything else createTelegramQrAuth takes: branding, claims, redirectTo, qrOrigin, basePath, …
+  authorize,                 // optional extra gate, ANDed with the hub's (needs botToken or telegram)
+  onError,                   // (err) => void — hub failures; defaults to console.error
+});
+```
+
+It returns the usual site-facing object (`handle`, `guard`, `poll`, `scan`, `beginLogin`, `loginPage`,
+`loginResponse`, `logoutResponse`, `getSession`, `verifyAssertion`, `authorize`) plus `block(id, label)`
+and `unblock(id)`. It takes no `registry`, `store`, `namespace` or `recordRequests`: passing one throws
+and says what to do instead. `telegram-qr-signin/site` loads only what a site needs (no console, no
+stores, no OIDC, no Durable Objects). `hubGate({ registry, namespace })` and
+`superAdminGate({ registry, rootAdmins })` are the two gates the hub itself is built from, for
+composing by hand with `every` / `some`.
+
+## The API
+
+Sites call these with `Authorization: Bearer <key>`; `createSiteAuth` does it for you, and this is
+the whole contract for a site in another language. All bodies and answers are JSON, uncached.
+
+| Call | What it does |
+| --- | --- |
+| `POST /hub-api/v1/logins` | Start a sign-in. Body `{ token, expiresAt, client: { origin, ip, userAgent, at } }`. The hub refuses it if the site is off or `client.origin` is not one of the site's URLs, and never holds one longer than 15 minutes |
+| `GET /hub-api/v1/logins/<token>` | `{ record }`: pending, or confirmed and by whom; `null` if there is none |
+| `POST /hub-api/v1/logins/<token>/consume` | Takes a confirmed sign-in, once; `{ record: null }` if it was not confirmed, or is already taken |
+| `DELETE /hub-api/v1/logins/<token>` | Forget one |
+| `POST /hub-api/v1/check` | `{ user: { id }, stage: "poll" \| "session", origin }` → `{ ok: true }` or `{ ok: false, reason }`. A refusal is a normal `200` |
+| `GET /hub-api/v1/site` | `{ namespace, name, enabled, origins }`: this site's own details |
+| `POST /hub-api/v1/blocks`, `DELETE …/blocks/<id>` | This site's own block list |
+
+| Status | Meaning |
+| --- | --- |
+| `401` | The key is missing, malformed or wrong. Always the same answer, whatever was wrong |
+| `403` | `origin_not_allowed`, or `namespace_disabled` |
+| `400`, `413`, `405`, `404` | A bad request, a body over 4 KB, the wrong method, an unknown route |
+| `503` + `Retry-After: 5` | The hub could not read its own data. Retry |
+
+Whatever the call, the hub decides which site is asking **from the key alone**: a `namespace` in a
+body is ignored. `stage: "confirm"` is refused, because confirming a scan is the bot's job at the hub
+and it is what records a request.
+
+## When the hub is down
+
+The hub is the single point of failure, so it is worth being exact about what happens:
+
+- **Nobody can start a sign-in.** The sign-in page answers `503` "Sign-in is temporarily
+  unavailable", with `Retry-After`. A page that is already open keeps polling and recovers by itself.
+- **Nobody is signed out.** A guarded request that cannot be checked answers `503`, **without**
+  clearing the cookie, so the same cookie works again the moment the hub is back. An outage, a
+  timeout (`hub.timeoutMs`), and a wrong or revoked key all look like this to a visitor; the cause
+  is reported to `onError`, with a `HubError` whose `code` says which (`hub_unreachable`,
+  `hub_unavailable`, `unauthorized`).
+- **Signing out still works**, because clearing a cookie needs no one.
+- **Sites you do not deploy together stay independent.** One site's bad key affects only that site.
 
 ## Refusal reasons
 
@@ -441,11 +528,12 @@ A custom sign-in page or log can tell these apart (`ctx.stage` is as in README �
 
 | `reason` | Meaning |
 | --- | --- |
-| `not_granted` | The site needs grants and this person has none |
+| `not_granted` | An invite-only site, and this person has no grant |
 | `blocked` | This person is on the site's block list (beats a grant; applies to open sites) |
 | `namespace_disabled` | The site is switched off in the console (open or not) |
-| `origin_not_allowed` | The request reached the site at a URL that is not registered for it (or, for a site that resolves its own id, not registered to any site) |
-| `origin_ambiguous` | The URL is registered to more than one site; the site refuses until that is fixed |
+| `pending_approval` | An approval-required site, and this person has no grant yet (`requested` says whether this scan was recorded) |
+| `origin_not_allowed` | The request reached the site at a URL that is not registered for it |
 | `unknown_namespace` | The site is not registered (deleted, or never added) |
 | `not_admin` | A scan of the console's QR by someone who is not a super admin |
-| `hub_unavailable` | The registry could not be read — transient, retry |
+| `hub_unavailable` | The registry could not be read, or the hub could not be reached — transient, retry |
+| `not_supported` | A site was asked to confirm a scan; only the hub's bot does |

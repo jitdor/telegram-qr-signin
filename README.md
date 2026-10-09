@@ -92,14 +92,14 @@ the store is injected rather than in-process.
 
 ## Install
 
-Not on npm — install straight from GitHub. Releases are git tags (`v1.0.0`, `v1.1.0`, …), and npm
+Not on npm — install straight from GitHub. Releases are git tags (`v2.0.0`, `v2.1.0`, …), and npm
 resolves a semver range against them:
 
 ```bash
-npm install github:jitdor/telegram-qr-signin#semver:^1.0.0
+npm install github:jitdor/telegram-qr-signin#semver:^2.0.0
 ```
 
-`^1.0.0` takes any 1.x release and never a breaking 2.0. Pin an exact release with `#v1.0.0`, or
+`^2.0.0` takes any 2.x release and never a breaking 3.0. Pin an exact release with `#v2.0.0`, or
 track the unreleased tip of `main` with plain `github:jitdor/telegram-qr-signin`. npm records the
 exact commit it fetched in your lockfile, so **commit `package-lock.json`**: installs stay
 reproducible, and you only move when you choose to:
@@ -615,40 +615,54 @@ Runnable example: [`examples/oidc-provider/`](examples/oidc-provider/worker.js).
 
 A Telegram bot has one webhook, so serving several sites from one bot means something must receive
 every `/start` and hand it to the right site — and something must say who may enter which. The
-optional `telegram-qr-signin/hub` is both: **one shared webhook that knows every site, and an admin
-console for managing super admins and each site's users.**
+optional `telegram-qr-signin/hub` is both: **one hub that is the single authority, and an admin
+console for managing super admins and each site's users.** Sites hold nothing of the hub's: they ask
+it over HTTPS.
 
 ```js
-import { createHub, createSiteAuth, D1HubStore } from "telegram-qr-signin/hub";
+import { DurableObject } from "cloudflare:workers";
+import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-signin/do";
+import { createHub, D1HubStore } from "telegram-qr-signin/hub";
+export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 
-// The hub Worker: the only one with the bot token. Serves /telegram/webhook and /admin.
+// The hub Worker: the only one with the bot token, the sign-in records and the access list.
+// Serves /telegram/webhook, /admin and /hub-api.
 const hub = createHub({
   botToken, botUsername,
-  store: new D1LoginStore(env.HUB_DB),   // shared with every site (D1: a scan shows up at once)
-  registry: new D1HubStore(env.HUB_DB),  // the access list, in the same database
-  superAdmins: "123456789",              // can always reach the console
+  store: new DoLoginStore(env.QRAUTH_DO),  // in-flight sign-ins: strongly consistent
+  registry: new D1HubStore(env.HUB_DB),    // the access list
+  superAdmins: "123456789",                // can always reach the console
   sessionSecret: env.CONSOLE_SESSION_SECRET,
   webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
 });
 export default { fetch: (request) => hub.fetch(request) };
-
-// Each site Worker: no bot token, no group id.
-const auth = createSiteAuth({ botUsername, store, registry, session: { secret } });  // finds its id from its URL
 ```
 
-Super admins sign in to `/admin` with the same QR scan, register sites, grant and revoke people per
-site, block people, and see an audit log. Each site is invite only, approval required (a scan is a
-registration: the admins are messaged, and the person is messaged when approved) or open. A namespace is bound
-to the URL(s) its site is served from, and a site works out which one it is from the URL it was
-reached at, so there is no id to keep in step and a stray deployment cannot borrow another's. A site can also be
-opened to anyone with a Telegram account (a forum, say) — a deliberate, confirmed step that leaves
-the site responsible for its own accounts. Revocation applies on the person's
-next request. The console is server-rendered with no JavaScript, CSRF-protected, and every change is
-logged.
+```js
+// Each site, on Cloudflare or anywhere else: no bot token, no database, no store.
+import { createSiteAuth } from "telegram-qr-signin/site";
+const auth = createSiteAuth({
+  hub: { url: "https://auth.example.com/hub-api", key: env.HUB_KEY },  // the key says which site this is
+  botUsername,
+  session: { secret: env.SESSION_SECRET },
+});
+```
 
-**[docs/hub.md](docs/hub.md)** has the setup, the roles, what protects the console, and what it
-deliberately does not do (per-site administrators, rate limiting). Runnable example:
-[`examples/hub/`](examples/hub/hub-worker.js).
+Super admins sign in to `/admin` with the same QR scan, register sites (the console shows each
+site's key once), grant and revoke people per site, block people, and see an audit log. Each site is
+invite only, approval required (a scan is a registration: the admins are messaged, and the person is
+messaged when approved) or open. A site is bound to the URL(s) it is served from, so a stray
+deployment cannot borrow another's. A site can also be opened to anyone with a Telegram account (a
+forum, say) — a deliberate, confirmed step that leaves the site responsible for its own accounts.
+Revocation applies on the person's next request. If the hub is down nobody can start a sign-in, and
+nobody is signed out. The console is server-rendered with no JavaScript, CSRF-protected, and every
+change is logged.
+
+**[docs/hub.md](docs/hub.md)** has the setup, the roles, the API, what protects the console, and what
+it deliberately does not do (per-site administrators, rate limiting).
+**[docs/integrating-a-site.md](docs/integrating-a-site.md)** is the step-by-step guide for connecting a
+site. Runnable examples: [`examples/hub/`](examples/hub/hub-worker.js) (a Workers hub and site, and a
+Node site).
 
 ---
 

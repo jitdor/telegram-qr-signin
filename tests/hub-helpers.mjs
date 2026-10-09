@@ -2,6 +2,8 @@ import { createHub } from "../src/hub/hub.js";
 import { createSiteAuth } from "../src/hub/site.js";
 import { MemoryHubStore } from "../src/hub/store.js";
 import { MemoryLoginStore } from "../src/stores/memory.js";
+import { createHash } from "node:crypto";
+import { generateSiteKey } from "../src/hub/validate.js";
 import { makeFakeTelegram, makeRequest, cookieFrom } from "./helpers.mjs";
 
 export const ROOT = { id: 1000, first_name: "Rhea", username: "rhea" };
@@ -32,26 +34,29 @@ export function makeHub({ registry = new MemoryHubStore(), config = {} } = {}) {
   return { hub, telegram, store, registry, errors };
 }
 
-/** A site Worker's auth, wired to the same store and registry. It holds no bot token. */
-export function makeSite({ store, registry }, namespace, extra = {}) {
+/**
+ * A site's auth, as it is deployed: it knows the hub's address and its own key and NOTHING else of the
+ * hub's. Its `fetch` goes straight into the hub in-process, so these tests exercise the real API
+ * without a network. The key is made the way the console makes one (a hash is stored, the key is not).
+ */
+export function makeSite(ctx, namespace, extra = {}) {
+  const { hub, registry } = ctx;
+  // One key per site per test, as in life: making another would replace (and so revoke) the first.
+  ctx.siteKeys ??= {};
+  let key = ctx.siteKeys[namespace];
+  if (!key) {
+    key = ctx.siteKeys[namespace] = generateSiteKey(namespace);
+    // The memory store's setSiteKey has no await in it, so the key is in place when this returns. A
+    // namespace that does not exist gets a key the hub does not know, which is how a deleted site looks.
+    registry.setSiteKey(namespace, createHash("sha256").update(key).digest("hex"));
+  }
+  const { hub: hubExtra, ...rest } = extra;
   return createSiteAuth({
-    namespace,
     botUsername: "hub_bot",
-    store,
-    registry,
     session: { secret: `site-secret-${namespace}-site-secret-00` },
-    ...extra,
-  });
-}
-
-/** A site that is not told its namespace and works it out from the URL each request arrives at. */
-export function makeDynamicSite({ store, registry }, extra = {}) {
-  return createSiteAuth({
-    botUsername: "hub_bot",
-    store,
-    registry,
-    session: { secret: "dynamic-site-secret-dynamic-site-00" },
-    ...extra,
+    onError: () => {},
+    ...rest,
+    hub: { url: `${ORIGIN}/hub-api`, key, fetch: (url, init) => hub.fetch(new Request(url, init)), ...hubExtra },
   });
 }
 
@@ -115,4 +120,19 @@ export function redirectTarget(response) {
 
 function assertRedirect(response) {
   if (response.status !== 303) throw new Error(`expected a 303 redirect, got ${response.status}`);
+}
+
+/**
+ * A pending sign-in written straight into the hub's store, as if a site had minted it: for tests of
+ * what the hub does with a record it should never have been given (the API refuses to make these).
+ */
+export async function plantLogin(ctx, namespace, client) {
+  const token = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  await ctx.store.create({ token, namespace, expiresAt: Math.floor(Date.now() / 1000) + 600, client });
+  return token;
+}
+
+/** The request a visitor's browser makes at `${host}${path}`, for the gate's origin check. */
+export function visit(host, path = "/") {
+  return makeRequest(`${host}${path}`);
 }

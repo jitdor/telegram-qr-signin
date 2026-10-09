@@ -1,10 +1,10 @@
 // The hub: ONE Telegram bot for every site, plus the admin console that decides who may sign in to
-// which. Deploy this once. It is the only Worker that holds the bot token.
+// which. Deploy this once. It is the only Worker that holds the bot token, the sign-in records and
+// the access list: sites hold nothing of that and ask this Worker over HTTPS.
 //
 // Setup:
 //   wrangler d1 create hub
 //   wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/hub-d1.sql
-//   wrangler d1 execute hub --remote --file=node_modules/telegram-qr-signin/migrations/d1.sql   # the login table, in the same database
 //   wrangler secret put TELEGRAM_BOT_TOKEN
 //   wrangler secret put TELEGRAM_WEBHOOK_SECRET          # any long random string
 //   wrangler secret put CONSOLE_SESSION_SECRET           # another one; NOT the bot token
@@ -12,10 +12,18 @@
 //   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<hub>/telegram/webhook&secret_token=<WEBHOOK_SECRET>"
 //
 // Then open https://<hub>/admin, scan the QR with a Telegram account whose numeric id is listed in
-// SUPER_ADMINS (see wrangler.jsonc), add a site, and grant people access.
+// SUPER_ADMINS (see wrangler.jsonc), add a site, copy the key it shows once into that site's
+// secrets, and grant people access. docs/integrating-a-site.md walks through the site side.
 
-import { D1LoginStore } from "telegram-qr-signin";
+import { DurableObject } from "cloudflare:workers";
+import { defineQrAuthStorage, DoLoginStore } from "telegram-qr-signin/do";
 import { createHub, D1HubStore } from "telegram-qr-signin/hub";
+
+// The sign-in records live in a Durable Object: strongly consistent, so a confirmed scan is visible
+// at once and one scan is exactly one sign-in. It creates its own tables; there is nothing to
+// migrate. (KV would be simpler still, but it is eventually consistent and can leave a confirmed
+// scan unseen for tens of seconds.) Bound in wrangler.jsonc.
+export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 
 export default {
   async fetch(request, env) {
@@ -23,13 +31,12 @@ export default {
       botToken: env.TELEGRAM_BOT_TOKEN,
       botUsername: env.TELEGRAM_BOT_USERNAME,
 
-      // Where a scan is handed from the bot to the site's browser. Every site binds the same one.
-      // D1, not KV: KV is eventually consistent, so a confirmed scan can take tens of seconds to reach
-      // the site's browser. The same database as the registry, so there is nothing more to bind.
-      store: new D1LoginStore(env.HUB_DB),
+      // Where a scan is handed from the bot to the site that is waiting for it. Only the hub reads or
+      // writes it: a site starts and collects its sign-ins through the hub's API.
+      store: new DoLoginStore(env.QRAUTH_DO),
 
-      // The access list. Every site reads it on each guarded request; this Worker's console writes it
-      // (a site's own moderation may also call registry.addBlock to ban someone — see docs/hub.md).
+      // The access list: sites, grants, blocks, super admins, requests, the audit log, site keys.
+      // Durable, so back it up. Only this Worker binds it.
       registry: new D1HubStore(env.HUB_DB),
 
       // Bootstrap admins: "111,222". They cannot be removed from the console, so you cannot lock
@@ -43,8 +50,8 @@ export default {
       qrOrigin: env.QR_ORIGIN,
     });
 
-    // /telegram/webhook and /admin/*; 404 for everything else. Use `hub.handle(request)` instead
-    // (it returns null for paths it does not own) to compose it with routes of your own.
+    // /telegram/webhook, /admin/* and /hub-api/*; 404 for everything else. Use `hub.handle(request)`
+    // instead (it returns null for paths it does not own) to compose it with routes of your own.
     return hub.fetch(request);
   },
 };

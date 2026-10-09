@@ -7,6 +7,8 @@
 //
 //   Sites     listNamespaces() · getNamespace(ns) · createNamespace({ namespace, name, origins, access?, createdBy })
 //             · updateNamespace(ns, { name?, enabled?, access? }) · deleteNamespace(ns)
+//   Keys      setSiteKey(ns, hash) -> bool (false if no such site) · getSiteKey(ns) -> { hash, createdAt } | null
+//             · removeSiteKey(ns). A site proves itself to the hub's API with a key; only its hash is stored.
 //   Origins   addOrigin(ns, url) · removeOrigin(ns, origin) · namespacesForOrigin(origin)
 //             (a site's `origins` come back on every site record: the URLs it may be served from.
 //             An origin belongs to ONE site: giving it to a second throws OriginInUseError, and
@@ -54,6 +56,7 @@ export class MemoryHubStore {
     this.grants = new Map(); // namespace -> Map(id -> grant)
     this.blocks = new Map(); // namespace -> Map(id -> block)
     this.requests = new Map(); // namespace -> Map(id -> request)
+    this.keys = new Map(); // namespace -> { hash, createdAt }
     this.audit = [];
     this.auditSeq = 0;
   }
@@ -166,7 +169,25 @@ export class MemoryHubStore {
     this.grants.delete(namespace);
     this.blocks.delete(namespace);
     this.requests.delete(namespace);
+    this.keys.delete(namespace);
     return this.namespaces.delete(namespace);
+  }
+
+  // --- Site keys -------------------------------------------------------------------------------
+
+  async setSiteKey(namespace, hash) {
+    if (!this.namespaces.has(namespace)) return false;
+    this.keys.set(namespace, { hash: String(hash), createdAt: nowSeconds() });
+    return true;
+  }
+
+  async getSiteKey(namespace) {
+    const key = this.keys.get(namespace);
+    return key ? { ...key } : null;
+  }
+
+  async removeSiteKey(namespace) {
+    return this.keys.delete(namespace);
   }
 
   // --- Access ----------------------------------------------------------------------------------

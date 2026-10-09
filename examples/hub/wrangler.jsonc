@@ -15,11 +15,16 @@
   },
 
   "d1_databases": [
-    // The access list AND the login store (one table, telegram_qr_logins). The SAME database in every
-    // site's wrangler config. Apply migrations/hub-d1.sql and migrations/d1.sql once. Back up the
-    // access list: unlike the login rows, it is durable.
+    // The access list: sites, grants, blocks, super admins, requests, the audit log and the hash of
+    // each site's key. Apply migrations/hub-d1.sql once. Back it up: it is the one durable thing here.
+    // Only this Worker binds it; no site does.
     { "binding": "HUB_DB", "database_name": "hub", "database_id": "<from `wrangler d1 create hub`>" }
   ],
+
+  // The in-flight sign-ins: a SQLite-backed Durable Object that creates its own tables. Strongly
+  // consistent, which is why it is used instead of KV.
+  "durable_objects": { "bindings": [{ "name": "QRAUTH_DO", "class_name": "QrAuthStorage" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["QrAuthStorage"] }],
 
   "observability": { "enabled": true }
 }

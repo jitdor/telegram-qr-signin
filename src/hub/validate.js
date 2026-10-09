@@ -183,3 +183,33 @@ export function describeUser(user) {
   if (name && handle) return `${name} (${handle})`;
   return name || handle;
 }
+
+// --- Site keys -------------------------------------------------------------------------------
+//
+// A site proves who it is to the hub with a key, not with a database binding. The key is
+// `tqk_<namespace>_<64 hex>`: the namespace is readable (so the key says which site it is for, and a
+// leaked one is easy to place) and the rest is 256 random bits. The hub stores only a SHA-256 of it,
+// so a copy of the registry cannot be turned back into working keys. The key is shown once, when it
+// is made.
+
+const SITE_KEY_RE = /^tqk_([A-Za-z0-9-]{1,24})_([0-9a-f]{64})$/;
+
+/** A fresh key for `namespace`. */
+export function generateSiteKey(namespace) {
+  assertSiteNamespace(namespace);
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `tqk_${namespace}_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** `{ namespace }` for something shaped like a site key, else null. Says nothing about validity. */
+export function parseSiteKey(key) {
+  const match = typeof key === "string" ? SITE_KEY_RE.exec(key) : null;
+  return match ? { namespace: match[1] } : null;
+}
+
+/** What the registry stores in place of a key. The key is random, so a plain hash is enough. */
+export async function hashSiteKey(key) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}

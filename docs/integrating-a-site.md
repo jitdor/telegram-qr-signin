@@ -78,7 +78,7 @@ export default {
 ```
 
 ```bash
-npm install github:jitdor/telegram-qr-signin#semver:^1.2.0
+npm install github:jitdor/telegram-qr-signin#semver:^1.3.1
 wrangler secret put HUB_KEY
 wrangler secret put SESSION_SECRET
 # vars in wrangler.jsonc: HUB_URL, TELEGRAM_BOT_USERNAME. No bindings: no D1, no KV, no Durable Object.

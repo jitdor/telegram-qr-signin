@@ -93,14 +93,14 @@ the store is injected rather than in-process.
 
 ## Install
 
-Not on npm — install straight from GitHub. Releases are git tags (`v1.2.0`, `v1.3.0`, …), and npm
+Not on npm — install straight from GitHub. Releases are git tags (`v1.2.0`, `v1.3.0`, `v1.3.1`, …), and npm
 resolves a semver range against them:
 
 ```bash
-npm install github:jitdor/telegram-qr-signin#semver:^1.2.0
+npm install github:jitdor/telegram-qr-signin#semver:^1.3.1
 ```
 
-`^1.2.0` takes any 1.x release from 1.2.0 up and never a breaking 2.0. Pin an exact release with `#v1.2.0`, or
+`^1.3.1` takes any 1.x release from 1.3.1 up and never a breaking 2.0. Pin an exact release with `#v1.3.1`, or
 track the unreleased tip of `main` with plain `github:jitdor/telegram-qr-signin`. npm records the
 exact commit it fetched in your lockfile, so **commit `package-lock.json`**: installs stay
 reproducible, and you only move when you choose to:

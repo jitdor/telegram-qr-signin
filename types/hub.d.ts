@@ -123,6 +123,9 @@ export interface HubStore {
   isAdmin(id: number | string): Promise<boolean>;
   addAdmin(admin: { id: number; label?: string; addedBy?: number | null }): Promise<boolean>;
   removeAdmin(id: number | string): Promise<boolean>;
+  /** The Telegram name each admin last signed in to the console with. Display only. */
+  listAdminNames(): Promise<Array<{ id: number; name: string }>>;
+  setAdminName(id: number | string, name: string): Promise<void>;
 
   listGrants(namespace: string, options?: { limit?: number }): Promise<HubGrant[]>;
   addGrant(grant: { namespace: string; id: number; label?: string; addedBy?: number | null }): Promise<boolean>;

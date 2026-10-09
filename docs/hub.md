@@ -198,8 +198,14 @@ per-site administrators.
 id on hover: in *Recent activity*, and in "added by" on the super admin, access and block lists.
 A bootstrap admin is named in configuration by putting `:Name` after the id
 (`superAdmins: "123456789:Kenny,987654321:Ada"`; ids alone still work). An admin added in the
-console is named by the *Name* field when adding. An admin with no name, or one who has since been
-removed, shows as their number.
+console is named by the *Name* field when adding. Any admin with neither is shown under
+the **Telegram name they last signed in with**, which the console keeps in `hub_admin_names`; it follows
+a rename on Telegram the next time they sign in (a console session lasts eight hours). Names you set
+win over Telegram's. The name is kept when an admin is removed, so their past actions still read as a
+person. Only an admin Telegram gave no name at all shows as a number.
+
+Upgrading a database from before 1.3: run `migrations/hub-d1-upgrade-1.3.sql` (adds that table). Until
+you do, the console still works and shows numbers.
 
 ## Site ids
 

@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS hub_admins (
   added_at INTEGER NOT NULL
 );
 
+-- The Telegram name each super admin last signed in to the console with, so the console can say
+-- "Ada" instead of a number. Written by the console, never read for any decision about access. A row
+-- stays when an admin is removed, so their past actions keep a name.
+CREATE TABLE IF NOT EXISTS hub_admin_names (
+  telegram_id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  seen_at INTEGER NOT NULL
+);
+
 -- Who may sign in to which site. Presence of a row IS the permission; revoking deletes the row,
 -- and the site's gate sees that on its very next request.
 CREATE TABLE IF NOT EXISTS hub_grants (

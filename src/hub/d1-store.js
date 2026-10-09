@@ -40,6 +40,7 @@ export class D1HubStore {
     this.t = {
       namespaces: `${prefix}namespaces`,
       admins: `${prefix}admins`,
+      adminNames: `${prefix}admin_names`,
       grants: `${prefix}grants`,
       blocks: `${prefix}blocks`,
       requests: `${prefix}requests`,
@@ -257,6 +258,23 @@ export class D1HubStore {
       .bind(Number(id), cleanLabel(label), addedBy, nowSeconds())
       .run();
     return res.meta.changes > 0;
+  }
+
+  async listAdminNames() {
+    const { results } = await this.db.prepare(`SELECT telegram_id, name FROM ${this.t.adminNames}`).bind().all();
+    return results.map((row) => ({ id: Number(row.telegram_id), name: row.name }));
+  }
+
+  async setAdminName(id, name) {
+    const clean = cleanLabel(name);
+    if (!clean) return;
+    await this.db
+      .prepare(
+        `INSERT INTO ${this.t.adminNames} (telegram_id, name, seen_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT (telegram_id) DO UPDATE SET name = excluded.name, seen_at = excluded.seen_at`
+      )
+      .bind(Number(id), clean, nowSeconds())
+      .run();
   }
 
   async removeAdmin(id) {

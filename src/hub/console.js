@@ -172,7 +172,7 @@ export function createAdminConsole({ auth, registry, rootAdmins, rootNames = new
     const isPost = request.method === "POST";
     if (!isRead && !isPost) return plain("Method not allowed", 405, { Allow: "GET, HEAD, POST" });
 
-    const ctx = { request, url, session, csrf: await csrfFor(session), sites: [] };
+    const ctx = { request, url, session, csrf: await csrfFor(session), sites: [], telegramNames: await rememberName(session) };
 
     if (isRead) {
       ctx.sites = await registry.listNamespaces(); // every page's sidebar lists the sites
@@ -230,11 +230,34 @@ export function createAdminConsole({ auth, registry, rootAdmins, rootNames = new
   }
 
   /**
-   * Names for super admins: the one given in configuration, else the note they were added with. An
-   * admin who is gone, or never had a name, has none and shows as their number.
+   * Notes the Telegram name the admin signed in with, and returns every name noted so far (id ->
+   * name). Display only, so a registry that cannot do it (an old database that has not been
+   * upgraded) costs the names, never the page.
    */
-  function namesOf(admins) {
-    const names = new Map();
+  async function rememberName(session) {
+    try {
+      const names = new Map((await registry.listAdminNames()).map((n) => [n.id, n.name]));
+      const id = Number(session.id);
+      const name = cleanLabel(session.name);
+      // displayName() falls back to "User <id>" for someone with no name at all, which says less than the id.
+      if (name && name !== `User ${session.id}` && names.get(id) !== name) {
+        await registry.setAdminName(id, name);
+        names.set(id, name);
+      }
+      return names;
+    } catch (err) {
+      onError(err);
+      return new Map();
+    }
+  }
+
+  /**
+   * Names for super admins. In order of preference: the one given in configuration, the one typed
+   * when they were added, then the Telegram name they last signed in with. An admin with none of
+   * these shows as their number.
+   */
+  function namesOf(admins, telegramNames) {
+    const names = new Map(telegramNames);
     for (const a of admins) if (a.label) names.set(a.id, a.label);
     for (const [id, name] of rootNames) if (roots.has(id)) names.set(id, name);
     return names;
@@ -251,7 +274,7 @@ export function createAdminConsole({ auth, registry, rootAdmins, rootNames = new
   async function dashboard(ctx) {
     const sites = ctx.sites;
     const [admins, log] = await Promise.all([registry.listAdmins(), registry.listAudit({ limit: AUDIT_ROWS_SHOWN })]);
-    const names = namesOf(admins);
+    const names = namesOf(admins, ctx.telegramNames);
     const adminRows = [
       ...[...roots].map((id) => ({ id, label: rootNames.get(id) ?? "", root: true })),
       ...admins.filter((a) => !roots.has(a.id)).map((a) => ({ ...a, root: false })),
@@ -326,7 +349,7 @@ ${flash(ctx.url)}
       .map(
         (a) => `<tr>
       <td><div class="who">${avatar(a.label || String(a.id), a.id, "sm")}<span><code>${a.id}</code>${a.id === Number(ctx.session.id) ? ' <span class="pill">you</span>' : ""}</span></div></td>
-      <td>${esc(a.label)}</td>
+      <td>${a.label ? esc(a.label) : ctx.telegramNames.has(a.id) ? `<span class="muted" title="From their Telegram profile">${esc(ctx.telegramNames.get(a.id))}</span>` : ""}</td>
       <td class="hide-sm">${a.root ? "Hub configuration" : `Console${a.addedBy ? `, added by ${who(a.addedBy, names)}` : ""}`}</td>
       <td class="act">${
         a.root || a.id === Number(ctx.session.id)
@@ -365,7 +388,7 @@ ${flash(ctx.url)}
       registry.getSiteKey(namespace),
       registry.listAdmins(),
     ]);
-    const names = namesOf(admins);
+    const names = namesOf(admins, ctx.telegramNames);
     const base = `${adminPath}/ns/${namespace}`; // namespace already matched NAMESPACE_RE
     const hostOf = (origin) => origin.replace(/^https?:\/\//, "");
     const statusPill = site.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>';

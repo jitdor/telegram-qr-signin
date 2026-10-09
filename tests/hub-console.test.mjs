@@ -413,7 +413,7 @@ test("adding a super admin lets them in; removing them shuts the door again", as
   assert.deepEqual((await ctx.registry.listAudit()).map((e) => e.action).slice(0, 2), ["admin.remove", "admin.add"]);
 });
 
-test("the activity log and \"added by\" show an admin's name, with the number only as a fallback", async () => {
+test("the activity log and \"added by\" show an admin's name: configured, then typed, then from Telegram", async () => {
   const ctx = makeHub({ config: { superAdmins: `${ROOT.id}:Rhea Boss` } });
   ctx.cookie = await signInToConsole(ctx.hub, ROOT);
   await post(ctx.hub, "/admin/admins", { id: String(ADMIN2.id), label: "Ada" }, { cookie: ctx.cookie });
@@ -424,29 +424,62 @@ test("the activity log and \"added by\" show an admin's name, with the number on
   await post(ctx.hub, "/admin/ns/acme/blocks", { ids: String(MALLORY.id) }, { cookie: adaCookie });
 
   const dashboard = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
-  assert.match(dashboard, /by <span title="Telegram id 1000">Rhea Boss<\/span>/, "a bootstrap admin's configured name");
-  assert.match(dashboard, /by <span title="Telegram id 2000">Ada<\/span>/, "an admin added in the console, by the name they were given");
+  assert.match(dashboard, /by <span title="Telegram id 1000">Rhea Boss<\/span>/, "configured beats the Telegram name (Rhea)");
+  assert.match(dashboard, /by <span title="Telegram id 2000">Ada<\/span>/, "typed beats the Telegram name (Ada Min)");
   assert.doesNotMatch(dashboard, /by <code>(1000|2000)<\/code>/);
 
   const site = await (await get(ctx.hub, "/admin/ns/acme", ctx.cookie)).text();
   assert.match(site, /by <span title="Telegram id 1000">Rhea Boss<\/span>/);
   assert.match(site, /by <span title="Telegram id 2000">Ada<\/span>/);
-
-  // Removed, an admin has no name to show, so the number is all that is left.
-  await post(ctx.hub, `/admin/admins/${ADMIN2.id}/remove`, {}, { cookie: ctx.cookie });
-  assert.match(await (await get(ctx.hub, "/admin", ctx.cookie)).text(), /by <code>2000<\/code>/);
 });
 
-test("a name from configuration is escaped, and an unnamed bootstrap admin still shows as a number", async () => {
+test("an admin with no configured name shows under the Telegram name they signed in with, and it follows a change", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  const feed = async () => (await (await get(ctx.hub, "/admin", ctx.cookie)).text()).match(/by <span title="Telegram id 1000">([^<]*)<\/span>/)?.[1];
+  assert.equal(await feed(), "Rhea");
+  assert.deepEqual(await ctx.registry.listAdminNames(), [{ id: ROOT.id, name: "Rhea" }]);
+
+  // They rename themselves on Telegram; the next sign-in carries the new name.
+  ctx.cookie = await signInToConsole(ctx.hub, { ...ROOT, first_name: "Rhea", last_name: "Stone" });
+  assert.equal(await feed(), "Rhea Stone");
+  assert.deepEqual(await ctx.registry.listAdminNames(), [{ id: ROOT.id, name: "Rhea Stone" }]);
+});
+
+test("a removed admin keeps their name in the log, and an admin with no name at all shows as a number", async () => {
+  const ctx = await setup();
+  await post(ctx.hub, "/admin/admins", { id: String(ADMIN2.id), label: "" }, { cookie: ctx.cookie });
+  const adaCookie = await signInToConsole(ctx.hub, ADMIN2);
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: adaCookie });
+  await post(ctx.hub, `/admin/admins/${ADMIN2.id}/remove`, {}, { cookie: ctx.cookie });
+  assert.match(await (await get(ctx.hub, "/admin", ctx.cookie)).text(), /by <span title="Telegram id 2000">Ada Min<\/span>/);
+
+  const nameless = { id: 3000 }; // Telegram gave no name: the session says "User 3000", which is not a name
+  await post(ctx.hub, "/admin/admins", { id: "3000", label: "" }, { cookie: ctx.cookie });
+  const cookie = await signInToConsole(ctx.hub, nameless);
+  await post(ctx.hub, "/admin/ns", { namespace: "wiki", url: "https://wiki.example" }, { cookie });
+  assert.match(await (await get(ctx.hub, "/admin", ctx.cookie)).text(), /by <code>3000<\/code>/);
+  assert.ok(!(await ctx.registry.listAdminNames()).some((n) => n.id === 3000));
+});
+
+test("a name from configuration is escaped", async () => {
   const ctx = makeHub({ config: { superAdmins: `${ROOT.id}:<b>x</b>` } });
   ctx.cookie = await signInToConsole(ctx.hub, ROOT);
   await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
   const html = await (await get(ctx.hub, "/admin", ctx.cookie)).text();
   assert.ok(!html.includes("<b>x</b>") && html.includes("&lt;b&gt;x&lt;/b&gt;"));
+});
 
-  const plain = await setup();
-  await post(plain.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: plain.cookie });
-  assert.match(await (await get(plain.hub, "/admin", plain.cookie)).text(), /by <code>1000<\/code>/);
+test("a registry that cannot keep names (an un-upgraded database) costs the names, not the console", async () => {
+  const ctx = await setup();
+  ctx.registry.listAdminNames = async () => {
+    throw new Error("no such table: hub_admin_names");
+  };
+  await post(ctx.hub, "/admin/ns", { namespace: "acme", url: "https://acme.example" }, { cookie: ctx.cookie });
+  const page = await get(ctx.hub, "/admin", ctx.cookie);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /by <code>1000<\/code>/);
+  assert.ok(ctx.errors.length > 0, "and the failure is reported");
 });
 
 test("a super admin does not get into any site just by being one", async () => {

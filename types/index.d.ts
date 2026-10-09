@@ -156,6 +156,8 @@ export interface Branding {
    * it is served from ("courier.example.com" becomes "Courier").
    */
   siteName?: string;
+  /** The title of a link preview, not of the browser tab (that is `title`). "{name}" is the site's name. */
+  previewTitle?: string;
   /**
    * What link previews (Telegram, Slack, Discord, X, iMessage) and search results say under the title.
    * "{name}" is the site's name.

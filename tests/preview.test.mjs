@@ -20,7 +20,9 @@ test("the bundled card is a 1200x630 PNG", () => {
 test("the sign-in page carries the tags link previews are built from", async () => {
   const auth = makeAuth();
   const html = await auth.loginPage({ request: get("/auth/login") });
-  assert.equal(meta(html, "og:title"), "Sign in to App");
+  assert.equal(meta(html, "og:title"), "Telegram QR Sign-in Provider");
+  assert.equal(meta(html, "twitter:title"), "Telegram QR Sign-in Provider");
+  assert.match(html, /<title>Sign in to App<\/title>/, "the tab keeps its own title");
   assert.equal(meta(html, "og:type"), "website");
   assert.match(meta(html, "og:description"), /^App authentication: sign in by scanning a QR code with Telegram\./);
   assert.equal(meta(html, "description"), meta(html, "og:description"));
@@ -57,12 +59,13 @@ test("the card follows basePath", async () => {
 });
 
 test("branding sets the description and replaces the card, and everything is escaped", async () => {
-  const auth = makeAuth({ branding: { siteName: "Acme", description: 'Acme "ID" <b>&', previewImage: "/static/card.png" } });
+  const auth = makeAuth({ branding: { siteName: "Acme", previewTitle: "{name} ID", description: 'Acme "ID" <b>&', previewImage: "/static/card.png" } });
   const html = await auth.loginPage({ request: get("/auth/login") });
   assert.equal(meta(html, "og:description"), "Acme &quot;ID&quot; &lt;b&gt;&amp;");
   assert.equal(meta(html, "og:image"), "https://app.example/static/card.png");
   assert.equal(meta(html, "og:image:width"), undefined, "the size of an image of your own is not known");
   assert.equal(meta(html, "og:site_name"), "Acme");
+  assert.equal(meta(html, "og:title"), "Acme ID");
 
   const absolute = renderLoginPage({ ...PAGE, origin: "https://app.example", branding: { previewImage: "https://cdn.example/c.png" } });
   assert.equal(meta(absolute, "og:image"), "https://cdn.example/c.png");

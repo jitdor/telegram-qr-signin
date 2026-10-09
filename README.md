@@ -488,8 +488,8 @@ into a card: the page's title, a short description and a 1200×630 image in the 
 (`og:` and `twitter:` tags, plus `<meta name="description">`). `auth.handle()` serves the image at
 `<basePath>/preview-<hash>.png` (`auth.paths.preview`), cached for a year, so nothing more is needed while
 `/auth/*` reaches `auth.handle()`. The image URL must be absolute, so it is built from the address the page
-is served from; a page rendered without a request has the text but no image. Set `branding.description`
-(`{name}` is the site's name) or `branding.previewImage` (your own absolute URL or a path on the site) to
+is served from; a page rendered without a request has the text but no image. The title is "Telegram QR Sign-in Provider" (the browser tab keeps `title`). Set `branding.previewTitle`,
+`branding.description` (`{name}` is the site's name) or `branding.previewImage` (your own absolute URL or a path on the site) to
 change them. Previews are cached by whoever made them, so an old link may keep its old card for a while;
 Telegram's [@WebpageBot](https://t.me/WebpageBot) refreshes it. `scripts/build-preview.mjs` redraws the
 bundled card.

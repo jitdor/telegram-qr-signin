@@ -99,6 +99,8 @@ export const DEFAULT_BRANDING = {
   // between dark and white to stay legible, whatever accent is chosen.
   accent: "#ee5a1c",
   siteName: "",
+  // The title of a link preview (og:title), which is not the browser tab's title. "{name}" is the site's name.
+  previewTitle: "Telegram QR Sign-in Provider",
   // What a link preview says under the title (Telegram, Slack, Discord, X, iMessage ...), and in search
   // results. "{name}" is the site's name. `previewImage` replaces the built-in card with an image of your own:
   // an absolute https URL, or a path on this site.
@@ -499,7 +501,7 @@ export function nameScaleFor(name) {
  * an `origin` (or `branding.previewImage` as an absolute URL) the preview is text only.
  */
 export function previewTags({ branding, name, host, origin, previewPath }) {
-  const title = branding.title;
+  const title = String(branding.previewTitle || branding.title).replace("{name}", name || host || "this site");
   const description = String(branding.description ?? "").replace("{name}", name || host || "this site").trim();
   let image = "";
   const own = String(branding.previewImage ?? "").trim();

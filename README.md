@@ -483,6 +483,17 @@ the poll to work anyway. A custom `renderLoginPage` is given `fontsPath` and can
 `--tqa-mono` work the same way). `scripts/build-fonts.sh` regenerates the bundled files. A `<link rel="icon">` in `headHtml` replaces the built-in tab icon. Motion is switched off
 for visitors who ask for less of it.
 
+**Link previews.** Paste the sign-in address into Telegram, Slack, Discord, X or iMessage and it unfurls
+into a card: the page's title, a short description and a 1200×630 image in the page's orange look
+(`og:` and `twitter:` tags, plus `<meta name="description">`). `auth.handle()` serves the image at
+`<basePath>/preview-<hash>.png` (`auth.paths.preview`), cached for a year, so nothing more is needed while
+`/auth/*` reaches `auth.handle()`. The image URL must be absolute, so it is built from the address the page
+is served from; a page rendered without a request has the text but no image. The title is "Telegram QR Sign-in Provider" (the browser tab keeps `title`). Set `branding.previewTitle`,
+`branding.description` (`{name}` is the site's name) or `branding.previewImage` (your own absolute URL or a path on the site) to
+change them. Previews are cached by whoever made them, so an old link may keep its old card for a while;
+Telegram's [@WebpageBot](https://t.me/WebpageBot) refreshes it. `scripts/build-preview.mjs` redraws the
+bundled card.
+
 > **Upgrading from 1.2:** the page was redesigned, so the options that styled the old card are
 > gone: `subtitle`, `background`, `gradientFrom`, `gradientTo`, `qrDark`, `qrLight` and the
 > three-step list (`stepsLabel`, `stepOneText`, `stepTwoText`, `stepThreeText`). They are ignored,
@@ -901,7 +912,7 @@ Returned object:
 | `logoutResponse({clearSiteData})` | web | 302 + cleared cookie (+ `Clear-Site-Data`)     |
 | `poll(request)`         | web     | The poll endpoint, if you route it yourself            |
 | `scan(request)`         | web     | The `/auth/q/<token>` endpoint, ditto                  |
-| `paths`                 | web     | `{ poll, login, logout, qr, scan }`                    |
+| `paths`                 | web     | `{ poll, login, logout, qr, scan, fonts, preview }`    |
 | `handleStart({text,from})` | bot  | Parse + confirm + a reply string                       |
 | `confirm({token,user})` | bot     | The raw confirm, for custom bot flows                  |
 | `parseStartPayload(text)` | bot   | Token for this namespace, or `null`                    |

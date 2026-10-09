@@ -156,6 +156,15 @@ export interface Branding {
    * it is served from ("courier.example.com" becomes "Courier").
    */
   siteName?: string;
+  /** The title of a link preview, not of the browser tab (that is `title`). "{name}" is the site's name. */
+  previewTitle?: string;
+  /**
+   * What link previews (Telegram, Slack, Discord, X, iMessage) and search results say under the title.
+   * "{name}" is the site's name.
+   */
+  description?: string;
+  /** Replaces the built-in link-preview card: an absolute https URL, or a path on this site. */
+  previewImage?: string;
   /** Headline, first line. */
   heading?: string;
   /** Headline, second line, on a computer or tablet. */
@@ -328,6 +337,8 @@ export interface RenderLoginPageParams {
   pollPath: string;
   /** Where the app serves the bundled fonts from (`auth.paths.fonts`). Without it the page uses system fonts. */
   fontsPath?: string;
+  /** Where the app serves the link-preview card from (`auth.paths.preview`). Without it the preview has no image. */
+  previewPath?: string;
   pollIntervalMs?: number;
   branding?: Branding;
   redirectTo?: string;
@@ -377,7 +388,7 @@ export type GuardResult =
 export interface TelegramQrAuth {
   namespace: string;
   basePath: string;
-  paths: { poll: string; login: string; logout: string; qr: string; scan: string; fonts: string };
+  paths: { poll: string; login: string; logout: string; qr: string; scan: string; fonts: string; preview: string };
   cookieName: string;
   tokenTtlSeconds: number;
 

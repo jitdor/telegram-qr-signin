@@ -20,6 +20,7 @@
 // markup — see POLL_STATUSES in provider.js for the contract it implements.
 
 import { fontFaceCss, fontPreloadLinks } from "./fonts/index.js";
+import { PREVIEW_HEIGHT, PREVIEW_WIDTH } from "./preview/index.js";
 
 export const DEFAULT_BRANDING = {
   title: "Sign in",
@@ -98,6 +99,14 @@ export const DEFAULT_BRANDING = {
   // between dark and white to stay legible, whatever accent is chosen.
   accent: "#ee5a1c",
   siteName: "",
+  // The title of a link preview (og:title), which is not the browser tab's title. "{name}" is the site's name.
+  previewTitle: "Telegram QR Sign-in Provider",
+  // What a link preview says under the title (Telegram, Slack, Discord, X, iMessage ...), and in search
+  // results. "{name}" is the site's name. `previewImage` replaces the built-in card with an image of your own:
+  // an absolute https URL, or a path on this site.
+  description:
+    "{name} authentication: sign in by scanning a QR code with Telegram. Tap Approve and you're in. No password, no phone number, nothing to type.",
+  previewImage: "",
   logoHtml: "",
   footerHtml: "",
   headHtml: "",
@@ -486,6 +495,44 @@ export function nameScaleFor(name) {
   return length > 7 ? Math.max(0.4, 7 / length).toFixed(2) : "1";
 }
 
+/**
+ * The Open Graph and Twitter tags link previews are built from: a title, a short description and, when the
+ * address the page is served from is known, the card. Link previews need an absolute image URL, so without
+ * an `origin` (or `branding.previewImage` as an absolute URL) the preview is text only.
+ */
+export function previewTags({ branding, name, host, origin, previewPath }) {
+  const title = String(branding.previewTitle || branding.title).replace("{name}", name || host || "this site");
+  const description = String(branding.description ?? "").replace("{name}", name || host || "this site").trim();
+  let image = "";
+  const own = String(branding.previewImage ?? "").trim();
+  try {
+    if (own) image = new URL(own, origin || undefined).href;
+    else if (previewPath && origin) image = new URL(previewPath, origin).href;
+  } catch {
+    image = "";
+  }
+  if (image && !/^https?:/i.test(image)) image = "";
+  const meta = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
+  return [
+    description && meta("name", "description", description),
+    meta("property", "og:type", "website"),
+    meta("property", "og:title", title),
+    description && meta("property", "og:description", description),
+    (name || host) && meta("property", "og:site_name", name || host),
+    image && meta("property", "og:image", image),
+    image && !own && meta("property", "og:image:type", "image/png"),
+    image && !own && meta("property", "og:image:width", PREVIEW_WIDTH),
+    image && !own && meta("property", "og:image:height", PREVIEW_HEIGHT),
+    image && meta("property", "og:image:alt", "Sign in with a QR code: scan it with Telegram"),
+    meta("name", "twitter:card", image ? "summary_large_image" : "summary"),
+    meta("name", "twitter:title", title),
+    description && meta("name", "twitter:description", description),
+    image && meta("name", "twitter:image", image),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** Everything inside <head> that every pass page shares. `css` is added after the shared stylesheet. */
 export function pageHead({ branding, fontsPath, title, letter, css = "" }) {
   return `<meta charset="UTF-8">
@@ -526,7 +573,10 @@ export function topBar({ branding, name, letter, host, secure = true }) {
  * @param {string} [params.fontsPath]  Where the app serves the bundled fonts from (`auth.paths.fonts`).
  *   Without it the page uses the system fonts.
  * @param {string} [params.origin]    The origin this page is being served from, when the request is
- *   known. It supplies the address shown on the pass when `site.host` is not given.
+ *   known. It supplies the address shown on the pass when `site.host` is not given, and the absolute
+ *   URL of the link-preview card.
+ * @param {string} [params.previewPath]  Where the app serves the link-preview card from (`auth.paths.preview`).
+ *   Without it, and without `branding.previewImage`, link previews of the page have no image.
  * @param {{ name?: string, host?: string }} [params.site]  Which site this is. `name` is the pass's
  *   name (and, by its first letter, the mark in the corner) and becomes the title "Sign in to
  *   <name>"; `host` is the address shown top right and as the destination. Supplied by the hub's
@@ -556,6 +606,7 @@ export function renderLoginPage(params) {
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(branding.title)}</title>
+${previewTags({ branding, name, host, origin: params.origin, previewPath: params.previewPath })}
 ${faviconLink(branding, letter)}
 ${fontPreloadLinks(params.fontsPath)}
 ${branding.headHtml}

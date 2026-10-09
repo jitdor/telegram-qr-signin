@@ -25,8 +25,22 @@ import { createHub, D1HubStore } from "telegram-qr-signin/hub";
 // scan unseen for tens of seconds.) Bound in wrangler.jsonc.
 export class QrAuthStorage extends defineQrAuthStorage(DurableObject) {}
 
+// What the hub needs from its environment. Checked up front, so a binding that is missing from the
+// deployment is named in the response instead of surfacing as a bare "Worker threw an exception"
+// (Cloudflare error 1101) from deep inside a constructor.
+const REQUIRED = ["QRAUTH_DO", "HUB_DB", "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME", "SUPER_ADMINS", "CONSOLE_SESSION_SECRET", "TELEGRAM_WEBHOOK_SECRET"];
+
 export default {
   async fetch(request, env) {
+    const missing = REQUIRED.filter((name) => !env[name]);
+    if (missing.length) {
+      console.error(`hub: missing from the environment: ${missing.join(", ")}`);
+      return new Response(`The hub is not fully configured. Missing: ${missing.join(", ")}. See examples/hub/wrangler.jsonc.`, {
+        status: 500,
+        headers: { "Content-Type": "text/plain; charset=UTF-8", "Cache-Control": "no-store" },
+      });
+    }
+
     const hub = createHub({
       botToken: env.TELEGRAM_BOT_TOKEN,
       botUsername: env.TELEGRAM_BOT_USERNAME,

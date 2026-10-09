@@ -239,6 +239,20 @@ for (const [kind, make] of Object.entries(IMPLEMENTATIONS)) {
     assert.equal(await store.isAdmin(5), false);
   });
 
+  t("admin names keep the latest Telegram name and outlive the admin", async (make) => {
+    const store = make();
+    assert.deepEqual(await store.listAdminNames(), []);
+    await store.addAdmin({ id: 5, label: "Eve" });
+    await store.setAdminName(5, "Eve Online");
+    await store.setAdminName("6", "  Sam   Lee ");
+    await store.setAdminName(7, "   "); // nothing to keep
+    await store.setAdminName(5, "Eve Offline");
+    const names = async () => (await store.listAdminNames()).map((n) => [n.id, n.name]).sort((x, y) => x[0] - y[0]);
+    assert.deepEqual(await names(), [[5, "Eve Offline"], [6, "Sam Lee"]]);
+    await store.removeAdmin(5);
+    assert.deepEqual(await names(), [[5, "Eve Offline"], [6, "Sam Lee"]], "removing an admin does not erase their name from the log");
+  });
+
   t("a refused scan is recorded once per person and counted", async (make) => {
     const store = make();
     await store.recordRequest({ namespace: "acme", user: { id: 7, first_name: "Old", username: "old" } });

@@ -2,7 +2,7 @@
 // they compose with `every` / `some` and with the built-in chatMember, allowlist and friends.
 
 import { parseIdList } from "../gates.js";
-import { originOfRequest } from "./validate.js";
+import { cleanLabel, originOfRequest } from "./validate.js";
 
 /**
  * Who may sign in to the site registered as `namespace`. In "granted" (invite only) and "approval"
@@ -113,9 +113,29 @@ export function superAdminGate({ registry, rootAdmins, onError = defaultOnError 
   };
 }
 
-/** The bootstrap admins from "111, 222" | [111, 222] | 111, as a list of ids. */
+/**
+ * The bootstrap admins from "111, 222" | [111, 222] | 111, as a list of ids. An entry may carry a
+ * name, "111:Ada" or "111=Ada", which parseRootAdminNames reads; the id is all this cares about.
+ */
 export function parseRootAdmins(value) {
-  return parseIdList(typeof value === "number" ? [value] : value).filter((id) => id > 0);
+  return rootAdminEntries(value).map((entry) => entry.id);
+}
+
+/** The names given to bootstrap admins, as a Map of id to name ("111:Ada, 222" gives 111 -> "Ada"). */
+export function parseRootAdminNames(value) {
+  return new Map(rootAdminEntries(value).filter((entry) => entry.name).map((entry) => [entry.id, entry.name]));
+}
+
+function rootAdminEntries(value) {
+  const raw = Array.isArray(value) ? value : typeof value === "number" ? [value] : String(value ?? "").split(",");
+  return raw
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry !== "")
+    .map((entry) => {
+      const at = entry.search(/[:=]/);
+      return { id: Number(at < 0 ? entry : entry.slice(0, at)), name: at < 0 ? "" : cleanLabel(entry.slice(at + 1)) };
+    })
+    .filter((entry) => Number.isInteger(entry.id) && entry.id > 0);
 }
 
 function defaultOnError(err) {

@@ -123,6 +123,9 @@ export interface HubStore {
   isAdmin(id: number | string): Promise<boolean>;
   addAdmin(admin: { id: number; label?: string; addedBy?: number | null }): Promise<boolean>;
   removeAdmin(id: number | string): Promise<boolean>;
+  /** The Telegram name each admin last signed in to the console with. Display only. */
+  listAdminNames(): Promise<Array<{ id: number; name: string }>>;
+  setAdminName(id: number | string, name: string): Promise<void>;
 
   listGrants(namespace: string, options?: { limit?: number }): Promise<HubGrant[]>;
   addGrant(grant: { namespace: string; id: number; label?: string; addedBy?: number | null }): Promise<boolean>;
@@ -170,7 +173,10 @@ export interface HubConfig {
    */
   store: LoginStore;
   registry: HubStore;
-  /** Bootstrap super admins — "111,222" or an array. At least one. Not removable from the console. */
+  /**
+   * Bootstrap super admins — "111,222" or an array. At least one. Not removable from the console.
+   * Name one with "111:Ada", and the console shows Ada instead of 111 wherever it says who did something.
+   */
   superAdmins: string | number | Array<string | number>;
   /** Signs the console's session cookie. Use a dedicated secret. */
   sessionSecret: string;
@@ -285,6 +291,8 @@ export declare function superAdminGate(options: {
   onError?: (err: unknown) => void;
 }): Gate;
 
+/** The names given to bootstrap admins ("111:Ada, 222" gives 111 -> "Ada"). */
+export declare function parseRootAdminNames(value: string | number | Array<string | number> | undefined): Map<number, string>;
 export declare function parseRootAdmins(value: string | number | Array<string | number> | undefined): number[];
 
 export declare const ADMIN_NAMESPACE: "hub-admin";

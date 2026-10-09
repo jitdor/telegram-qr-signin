@@ -77,6 +77,7 @@ test("package.json exports the site entry point", () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(pkg.exports["./site"], { types: "./types/site.d.ts", default: "./src/hub/site.js" });
   assert.equal(pkg.exports["./migrations/hub-d1-upgrade-1.2.sql"], "./migrations/hub-d1-upgrade-1.2.sql");
+  assert.equal(pkg.exports["./migrations/hub-d1-upgrade-1.3.sql"], "./migrations/hub-d1-upgrade-1.3.sql");
   assert.equal(pkg.version, "1.2.0");
 });
 
@@ -97,7 +98,7 @@ test("the hub entry point exports what its types and docs promise", async () => 
   const mod = await import("../src/hub/index.js");
   assert.deepEqual(Object.keys(mod).sort(), [
     "ADMIN_NAMESPACE", "D1HubStore", "HubError", "MemoryHubStore", "NAMESPACE_RE", "OriginInUseError", "createHub", "createSiteAuth",
-    "hubGate", "parseRootAdmins", "parseTelegramId", "parseTelegramIds", "superAdminGate",
+    "hubGate", "parseRootAdminNames", "parseRootAdmins", "parseTelegramId", "parseTelegramIds", "superAdminGate",
   ]);
   const types = readFileSync(join(ROOT, "types", "hub.d.ts"), "utf8");
   for (const name of Object.keys(mod)) assert.match(types, new RegExp(`export declare (function|class|const) ${name}\\b`), `${name} is typed`);

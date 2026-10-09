@@ -194,6 +194,19 @@ with an empty or broken registry, they can sign in and repair it. Admins you add
 extra, removable, and recorded with who added them. All super admins are equal; there are no
 per-site administrators.
 
+**Names.** An id is stored for every action, but the console shows a name where it has one, with the
+id on hover: in *Recent activity*, and in "added by" on the super admin, access and block lists.
+A bootstrap admin is named in configuration by putting `:Name` after the id
+(`superAdmins: "123456789:Kenny,987654321:Ada"`; ids alone still work). An admin added in the
+console is named by the *Name* field when adding. Any admin with neither is shown under
+the **Telegram name they last signed in with**, which the console keeps in `hub_admin_names`; it follows
+a rename on Telegram the next time they sign in (a console session lasts eight hours). Names you set
+win over Telegram's. The name is kept when an admin is removed, so their past actions still read as a
+person. Only an admin Telegram gave no name at all shows as a number.
+
+Upgrading a database from before 1.3: run `migrations/hub-d1-upgrade-1.3.sql` (adds that table). Until
+you do, the console still works and shows numbers.
+
 ## Site ids
 
 Each site has an **id** (the `namespace` in code): the short label that goes in the QR so the bot
@@ -351,7 +364,8 @@ ask for access.
   list of codes — a crafted link cannot make the console display words you did not write.
 - **Input**: Telegram ids are digits only and all-or-nothing (one typo in a pasted list adds nobody),
   site ids are validated, and nothing from a form reaches SQL except as a bound parameter.
-- **Audit**: every mutation is logged with the acting admin's id. A failing log write never undoes
+- **Audit**: every mutation is logged with the acting admin's id, shown in the console as their name
+  when they have one (see [Roles](#roles)). A failing log write never undoes
   or hides the change itself.
 
 ## Behaviours worth knowing

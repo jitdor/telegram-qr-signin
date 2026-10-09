@@ -124,6 +124,7 @@ const SECURITY_HEADERS = {
  *   that its basePath is `${adminPath}/auth`.
  * @param {object} options.registry    A HubStore.
  * @param {number[]} options.rootAdmins  Bootstrap admins: shown, never removable here.
+ * @param {Map<number, string>} [options.rootNames]  Names given to bootstrap admins in configuration.
  * @param {string} options.adminPath   e.g. "/admin".
  * @param {string} options.apiPath     e.g. "/hub-api": where sites call the hub, shown in each site's setup.
  * @param {string} options.secret      Session secret, from which the CSRF key is derived.
@@ -132,7 +133,7 @@ const SECURITY_HEADERS = {
  *   them. Returns whether they were told; the console says so either way.
  * @param {(err: unknown) => void} [options.onError]
  */
-export function createAdminConsole({ auth, registry, rootAdmins, adminPath, apiPath, secret, onApproved, onError = defaultOnError }) {
+export function createAdminConsole({ auth, registry, rootAdmins, rootNames = new Map(), adminPath, apiPath, secret, onApproved, onError = defaultOnError }) {
   const roots = new Set(rootAdmins);
   const authPrefix = `${adminPath}/auth/`;
   const csrfKey = hmacSha256(new TextEncoder().encode("TelegramQrHubCsrfKey"), secret);
@@ -171,7 +172,7 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, apiP
     const isPost = request.method === "POST";
     if (!isRead && !isPost) return plain("Method not allowed", 405, { Allow: "GET, HEAD, POST" });
 
-    const ctx = { request, url, session, csrf: await csrfFor(session), sites: [] };
+    const ctx = { request, url, session, csrf: await csrfFor(session), sites: [], telegramNames: await rememberName(session) };
 
     if (isRead) {
       ctx.sites = await registry.listNamespaces(); // every page's sidebar lists the sites
@@ -228,13 +229,54 @@ export function createAdminConsole({ auth, registry, rootAdmins, adminPath, apiP
     }
   }
 
+  /**
+   * Notes the Telegram name the admin signed in with, and returns every name noted so far (id ->
+   * name). Display only, so a registry that cannot do it (an old database that has not been
+   * upgraded) costs the names, never the page.
+   */
+  async function rememberName(session) {
+    try {
+      const names = new Map((await registry.listAdminNames()).map((n) => [n.id, n.name]));
+      const id = Number(session.id);
+      const name = cleanLabel(session.name);
+      // displayName() falls back to "User <id>" for someone with no name at all, which says less than the id.
+      if (name && name !== `User ${session.id}` && names.get(id) !== name) {
+        await registry.setAdminName(id, name);
+        names.set(id, name);
+      }
+      return names;
+    } catch (err) {
+      onError(err);
+      return new Map();
+    }
+  }
+
+  /**
+   * Names for super admins. In order of preference: the one given in configuration, the one typed
+   * when they were added, then the Telegram name they last signed in with. An admin with none of
+   * these shows as their number.
+   */
+  function namesOf(admins, telegramNames) {
+    const names = new Map(telegramNames);
+    for (const a of admins) if (a.label) names.set(a.id, a.label);
+    for (const [id, name] of rootNames) if (roots.has(id)) names.set(id, name);
+    return names;
+  }
+
+  /** Who did it: their name with the number on hover, or just the number if there is no name. */
+  function who(id, names) {
+    const name = names.get(Number(id));
+    return name ? `<span title="Telegram id ${esc(id)}">${esc(name)}</span>` : `<code>${esc(id)}</code>`;
+  }
+
   // --- Pages -----------------------------------------------------------------------------------
 
   async function dashboard(ctx) {
     const sites = ctx.sites;
     const [admins, log] = await Promise.all([registry.listAdmins(), registry.listAudit({ limit: AUDIT_ROWS_SHOWN })]);
+    const names = namesOf(admins, ctx.telegramNames);
     const adminRows = [
-      ...[...roots].map((id) => ({ id, label: "", root: true })),
+      ...[...roots].map((id) => ({ id, label: rootNames.get(id) ?? "", root: true })),
       ...admins.filter((a) => !roots.has(a.id)).map((a) => ({ ...a, root: false })),
     ];
     const open = sites.filter((s) => s.access === "anyone").length;
@@ -302,13 +344,13 @@ ${flash(ctx.url)}
   <h2>${icon("shield")}Super admins <span class="count">${adminRows.length}</span></h2>
   <p class="lead">Can use this console: add sites, grant and revoke access, and add other super admins. Being a super admin does not by itself let you into any site.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>Telegram id</th><th>Note</th><th class="hide-sm">Source</th><th></th></tr></thead>
+    <thead><tr><th>Telegram id</th><th>Name</th><th class="hide-sm">Source</th><th></th></tr></thead>
     <tbody>${adminRows
       .map(
         (a) => `<tr>
       <td><div class="who">${avatar(a.label || String(a.id), a.id, "sm")}<span><code>${a.id}</code>${a.id === Number(ctx.session.id) ? ' <span class="pill">you</span>' : ""}</span></div></td>
-      <td>${esc(a.label)}</td>
-      <td class="hide-sm">${a.root ? "Hub configuration" : `Console${a.addedBy ? `, added by <code>${a.addedBy}</code>` : ""}`}</td>
+      <td>${a.label ? esc(a.label) : ctx.telegramNames.has(a.id) ? `<span class="muted" title="From their Telegram profile">${esc(ctx.telegramNames.get(a.id))}</span>` : ""}</td>
+      <td class="hide-sm">${a.root ? "Hub configuration" : `Console${a.addedBy ? `, added by ${who(a.addedBy, names)}` : ""}`}</td>
       <td class="act">${
         a.root || a.id === Number(ctx.session.id)
           ? ""
@@ -320,7 +362,7 @@ ${flash(ctx.url)}
   ${postForm(ctx, `${adminPath}/admins`, `
     <div class="row">
       <label>Telegram user id<input name="id" required inputmode="numeric" pattern="[0-9]{1,15}" placeholder="123456789" autocomplete="off"></label>
-      <label class="grow">Note<input name="label" maxlength="80" placeholder="Who is this?" autocomplete="off"></label>
+      <label class="grow">Name<input name="label" maxlength="80" placeholder="Who is this?" autocomplete="off"></label>
       <button class="btn primary">Add super admin</button>
     </div>`)}
 </section>
@@ -328,7 +370,7 @@ ${flash(ctx.url)}
 <section id="activity">
   <h2>${icon("activity")}Recent activity</h2>
   <p class="lead">Every change made in this console.</p>
-  ${auditFeed(log)}
+  ${auditFeed(log, names)}
 </section>`;
     return page("Overview", body, ctx);
   }
@@ -339,12 +381,14 @@ ${flash(ctx.url)}
     const mode = site.access;
     const open = mode === "anyone";
     const approval = mode === "approval";
-    const [grants, blocks, requests, siteKey] = await Promise.all([
+    const [grants, blocks, requests, siteKey, admins] = await Promise.all([
       registry.listGrants(namespace),
       registry.listBlocks(namespace),
       approval ? registry.listRequests(namespace) : [], // only an approval site has a queue
       registry.getSiteKey(namespace),
+      registry.listAdmins(),
     ]);
+    const names = namesOf(admins, ctx.telegramNames);
     const base = `${adminPath}/ns/${namespace}`; // namespace already matched NAMESPACE_RE
     const hostOf = (origin) => origin.replace(/^https?:\/\//, "");
     const statusPill = site.enabled ? '<span class="pill on">On</span>' : '<span class="pill off">Off</span>';
@@ -507,7 +551,7 @@ ${
         (g) => `<tr>
       <td><div class="who">${avatar(g.label || String(g.id), g.id, "sm")}<code>${g.id}</code></div></td>
       <td>${esc(g.label)}</td>
-      <td class="hide-sm">${when(g.addedAt)}${g.addedBy ? ` by <code>${g.addedBy}</code>` : ""}</td>
+      <td class="hide-sm">${when(g.addedAt)}${g.addedBy ? ` by ${who(g.addedBy, names)}` : ""}</td>
       <td class="act">${postForm(ctx, `${base}/grants/${g.id}/remove`, '<button class="btn danger">Revoke</button>', "inline")}</td>
     </tr>`
       )
@@ -535,7 +579,7 @@ ${
         (b) => `<tr>
       <td><div class="who">${avatar(b.label || String(b.id), b.id, "sm")}<code>${b.id}</code></div></td>
       <td>${esc(b.label)}</td>
-      <td class="hide-sm">${when(b.addedAt)}${b.addedBy ? ` by <code>${b.addedBy}</code>` : ""}</td>
+      <td class="hide-sm">${when(b.addedAt)}${b.addedBy ? ` by ${who(b.addedBy, names)}` : ""}</td>
       <td class="act">${postForm(ctx, `${base}/blocks/${b.id}/remove`, '<button class="btn quiet">Unblock</button>', "inline")}</td>
     </tr>`
       )
@@ -888,14 +932,14 @@ ${
     return "";
   }
 
-  function auditFeed(log) {
+  function auditFeed(log, names) {
     if (!log.length) return `<div class="empty">${icon("activity")}<span>Nothing yet.</span></div>`;
     return `<ol class="feed">${log
       .map(
         (e) => `<li>
       <span class="ic">${icon(activityIcon(e.action))}</span>
       <div><span class="what"><strong><code>${esc(e.action)}</code></strong>${e.target ? ` on <strong>${esc(e.target)}</strong>` : ""}</span>
-        <span class="meta">by <code>${e.actor ?? "—"}</code></span>${e.detail ? `<span class="meta feed-detail">${esc(e.detail)}</span>` : ""}</div>
+        <span class="meta">by ${e.actor == null ? "<code>—</code>" : who(e.actor, names)}</span>${e.detail ? `<span class="meta feed-detail">${esc(e.detail)}</span>` : ""}</div>
       ${when(e.at)}
     </li>`
       )

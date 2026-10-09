@@ -75,6 +75,44 @@ test("a site whose hub has gone away asks visitors to try again instead of faili
   void t;
 });
 
+// What the Workers runtime does with fetch's `redirect` option: it accepts "follow" and "manual" and
+// throws on anything else, "error" included. A hub client that sends "error" never gets a call out.
+function workersLikeFetch(respond) {
+  const seen = [];
+  const fn = async (url, init = {}) => {
+    seen.push(init.redirect);
+    if (init.redirect !== undefined && !["follow", "manual"].includes(init.redirect)) {
+      throw new TypeError(`Invalid redirect value, must be one of "follow" or "manual" (got "${init.redirect}").`);
+    }
+    return respond(url, init);
+  };
+  fn.seen = seen;
+  return fn;
+}
+
+test("the hub client only sends a redirect mode the Workers runtime accepts", async () => {
+  const ctx = makeHub();
+  const key = generateSiteKey("docs");
+  await ctx.registry.createNamespace({ namespace: "docs", name: "Docs", origins: [SITE_ORIGIN] });
+  await ctx.registry.setSiteKey("docs", await hashSiteKey(key));
+  const fetch = workersLikeFetch((url, init) => ctx.hub.fetch(new Request(url, init)));
+  const site = createSiteAuth({ hub: { url: "https://hub.example/hub-api", key, fetch }, botUsername: "hub_bot", session: { secret: "docs-secret-docs-secret-docs-0000" }, onError: (e) => { throw e; } });
+  const login = await site.handle(makeRequest(`${SITE_ORIGIN}/auth/login`));
+  assert.equal(login.status, 200, "the call got through to the hub");
+  assert.deepEqual([...new Set(fetch.seen)], ["manual"]);
+});
+
+test("a hub address that answers with a redirect is treated as unreachable, not followed", async () => {
+  const key = generateSiteKey("docs");
+  const errors = [];
+  const fetch = workersLikeFetch(() => new Response(null, { status: 302, headers: { Location: "https://elsewhere.example/" } }));
+  const site = createSiteAuth({ hub: { url: "https://hub.example/hub-api", key, fetch }, botUsername: "hub_bot", session: { secret: "docs-secret-docs-secret-docs-0000" }, onError: (e) => errors.push(e) });
+  const login = await site.handle(makeRequest(`${SITE_ORIGIN}/auth/login`));
+  assert.equal(login.status, 503);
+  assert.equal(errors[0].code, "hub_unreachable");
+  assert.equal(fetch.seen.length, 1, "and it was not retried at the redirect's address");
+});
+
 test("the key is never sent anywhere a redirect could take it", async () => {
   let followed = false;
   const target = http.createServer((req, res) => {

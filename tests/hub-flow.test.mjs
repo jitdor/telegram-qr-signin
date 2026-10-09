@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { createHub } from "../src/hub/hub.js";
 import { createSiteAuth } from "../src/hub/site.js";
-import { hubGate, superAdminGate, parseRootAdmins } from "../src/hub/gates.js";
+import { hubGate, superAdminGate, parseRootAdmins, parseRootAdminNames } from "../src/hub/gates.js";
 import { MemoryHubStore } from "../src/hub/store.js";
 import { MemoryLoginStore } from "../src/stores/memory.js";
 import { chatMember } from "../src/gates.js";
@@ -513,6 +513,13 @@ test("parseRootAdmins takes a string, a number or an array, and drops junk", () 
   assert.deepEqual(parseRootAdmins([1000, "2000", "x", 0, -5]), [1000, 2000]);
   assert.deepEqual(parseRootAdmins(""), []);
   assert.deepEqual(parseRootAdmins(undefined), []);
+});
+
+test("a bootstrap admin can carry a name: \"id:Name\" still counts as the id", () => {
+  assert.deepEqual(parseRootAdmins("1000:Rhea, 2000"), [1000, 2000]);
+  assert.deepEqual(parseRootAdmins([1000, "2000=Ada Min"]), [1000, 2000]);
+  assert.deepEqual([...parseRootAdminNames("1000:Rhea, 2000, 3000=Ada  Min")], [[1000, "Rhea"], [3000, "Ada Min"]]);
+  assert.deepEqual([...parseRootAdminNames(1000)], []);
 });
 
 test("createHub refuses a configuration that would be unusable or unsafe", () => {

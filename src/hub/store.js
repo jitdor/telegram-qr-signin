@@ -16,6 +16,8 @@
 //   Access    access(ns, userId) -> { exists, enabled, mode, origins, granted, blocked }
 //                                                                     (the one call a gate makes)
 //   Admins    listAdmins() · isAdmin(id) · addAdmin({ id, label, addedBy }) · removeAdmin(id)
+//             · listAdminNames() -> [{ id, name }] · setAdminName(id, name): the Telegram name an admin
+//             last signed in with. Display only; it outlives the admin, so old log entries keep a name.
 //   Grants    listGrants(ns, { limit }) · addGrant({ namespace, id, label, addedBy }) · removeGrant(ns, id)
 //   Blocks    listBlocks(ns, { limit }) · addBlock({ namespace, id, label, addedBy }) · removeBlock(ns, id)
 //   Requests  recordRequest({ namespace, user }) -> { isNew, attempts } · listRequests(ns, { limit }) · getRequest(ns, id)
@@ -57,6 +59,7 @@ export class MemoryHubStore {
     this.blocks = new Map(); // namespace -> Map(id -> block)
     this.requests = new Map(); // namespace -> Map(id -> request)
     this.keys = new Map(); // namespace -> { hash, createdAt }
+    this.adminNames = new Map(); // id -> name
     this.audit = [];
     this.auditSeq = 0;
   }
@@ -225,6 +228,15 @@ export class MemoryHubStore {
 
   async removeAdmin(id) {
     return this.admins.delete(Number(id));
+  }
+
+  async listAdminNames() {
+    return [...this.adminNames].map(([id, name]) => ({ id, name }));
+  }
+
+  async setAdminName(id, name) {
+    const clean = cleanLabel(name);
+    if (clean) this.adminNames.set(Number(id), clean);
   }
 
   // --- Grants ----------------------------------------------------------------------------------

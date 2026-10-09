@@ -534,13 +534,14 @@ export function previewTags({ branding, name, host, origin, previewPath }) {
 }
 
 /** Everything inside <head> that every pass page shares. `css` is added after the shared stylesheet. */
-export function pageHead({ branding, fontsPath, title, letter, css = "" }) {
+export function pageHead({ branding, fontsPath, title, letter, css = "", head = "" }) {
   return `<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(title)}</title>
+${head}
 ${faviconLink(branding, letter)}
 ${fontPreloadLinks(fontsPath)}
 ${branding.headHtml}
@@ -707,10 +708,11 @@ export function renderScanEndedPage({ branding: overrides, fontsPath } = {}) {
  * @param {string} params.text       What happened, in a sentence.
  * @param {string} [params.pageTitle]  The tab title. Defaults to `title`.
  * @param {string} [params.extraHtml]  Already-escaped markup after the text, inside the ticket.
+ * @param {string} [params.head]       Already-escaped markup for <head>, such as `previewTags()`.
  * @param {{ name?: string, host?: string }} [params.site]
  * @param {string} [params.origin]
  */
-export function renderEndedPage({ branding, fontsPath, title, text, pageTitle, extraHtml = "", site, origin }) {
+export function renderEndedPage({ branding, fontsPath, title, text, pageTitle, extraHtml = "", head = "", site, origin }) {
   const { host, name, letter, secure } = site || origin ? resolveSite({ branding, site, origin }) : { host: "", name: "", letter: firstLetter(branding.siteName), secure: true };
   const top = site || origin ? topBar({ branding, name, letter, host, secure }) : branding.logoHtml ? `<header class="tqa-top"><div class="tqa-brand">${branding.logoHtml}</div></header>` : "";
   return `<!DOCTYPE html>
@@ -721,6 +723,7 @@ ${pageHead({
   fontsPath,
   title: pageTitle ?? title,
   letter,
+  head,
   css: `
   .tqa-ticket.tqa-ticket-ended { grid-template-columns: minmax(0, 1fr); }
   .tqa-ended-title { margin: 0.7rem 0 0; font: 900 clamp(2.2rem, 10vw, 3.4rem)/0.94 var(--tqa-display); letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance; }

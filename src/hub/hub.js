@@ -17,6 +17,7 @@
 // and the registry (who holds a grant). Sites never need the bot token.
 
 import { createTelegramQrAuth } from "../provider.js";
+import { DEFAULT_BRANDING, escapeHtml, previewTags, renderEndedPage } from "../login-page.js";
 import { createStartHandler, createUpdateEndpoint } from "../bot.js";
 import { TelegramClient } from "../telegram.js";
 import { tokenPattern } from "../crypto.js";
@@ -55,6 +56,9 @@ const REQUEST_NOTICES_PER_HOUR = 5;
  *   hub uses the address Telegram's webhook calls it at.
  * @param {number} [config.adminSessionSeconds=28800]  Console sign-ins last 8 hours by default.
  * @param {string} [config.qrOrigin]       See createTelegramQrAuth — applies to the console's QR.
+ * @param {boolean} [config.landing=true]  Answer GET / with a small page that says what this is and links to the
+ *   console, carrying the link-preview card, so the hub's bare address unfurls in Telegram, Slack and the like
+ *   instead of being a 404. Set false when something else owns `/`.
  * @param {object} [config.branding]       Overrides for the console's sign-in page.
  * @param {object} [config.telegram]       Bring-your-own Telegram client exposing `call()`.
  * @param {Function} [config.onUnhandled]  `(update) => void` for updates that were not sign-ins.
@@ -75,6 +79,7 @@ export function createHub(config) {
     apiPath = "/hub-api",
     adminSessionSeconds = 8 * 3600,
     qrOrigin,
+    landing = true,
     branding,
     telegram = botToken ? new TelegramClient(botToken) : null,
     onUnhandled,
@@ -324,9 +329,37 @@ export function createHub(config) {
     return updateEndpoint(request);
   };
 
+  /** GET / — what link previews of the hub's bare address read. No token is minted, and nothing here is private. */
+  function landingResponse(request) {
+    if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+    const origin = new URL(request.url).origin;
+    const page = {
+      ...DEFAULT_BRANDING,
+      ...branding,
+      kickerText: "Authentication platform",
+      title: "Telegram QR Sign-in Provider",
+      description: branding?.description ?? "Sign in by scanning a QR code with Telegram. Tap Approve and you're in. No password, no phone number, nothing to type.",
+    };
+    const text = String(page.description).replace("{name}", page.siteName || new URL(origin).host);
+    const html = renderEndedPage({
+      branding: page,
+      fontsPath: adminAuth.paths.fonts,
+      title: "Sign in with a QR code.",
+      text,
+      pageTitle: page.title,
+      extraHtml: `<p class="tqa-ended-note"><a style="color: inherit; font-weight: 600" href="${escapeHtml(adminPath)}">Open the admin console</a></p>`,
+      head: previewTags({ branding: page, name: page.siteName, host: new URL(origin).host, origin, previewPath: adminAuth.paths.preview }),
+      origin,
+    });
+    return new Response(request.method === "HEAD" ? null : html, {
+      headers: { "Content-Type": "text/html; charset=UTF-8", "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" },
+    });
+  }
+
   /** The hub's routes, or null for any path it does not own — so it composes with other routing. */
   async function handle(request) {
     const { pathname } = new URL(request.url);
+    if (landing && pathname === "/") return landingResponse(request);
     if (pathname === webhookPath) return webhook(request);
     return (await api.handle(request)) ?? adminConsole.handle(request);
   }

@@ -573,3 +573,29 @@ test("signInToConsole works end to end (guards the helper the console tests rely
   const ctx = makeHub();
   assert.match(await signInToConsole(ctx.hub, ROOT), /^hub_admin_session=.+/);
 });
+
+test("the hub's bare address is a landing page that link previews can read, not a 404", async () => {
+  const ctx = makeHub();
+  const response = await ctx.hub.fetch(makeRequest(`${ORIGIN}/`));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /^text\/html/);
+  const html = await response.text();
+  const meta = (key) => new RegExp(`<meta (?:property|name)="${key}" content="([^"]*)">`).exec(html)?.[1];
+  assert.equal(meta("og:title"), "Telegram QR Sign-in Provider");
+  assert.match(meta("og:description"), /QR code/);
+  assert.equal(meta("twitter:card"), "summary_large_image");
+  assert.equal(meta("og:image"), `${ORIGIN}${ctx.hub.adminAuth.paths.preview}`);
+  assert.match(html, /<title>Telegram QR Sign-in Provider<\/title>/);
+  assert.match(html, /href="\/admin"/);
+
+  // The card it names is served, and there is no login token to mint or leak on this page.
+  assert.equal((await ctx.hub.fetch(makeRequest(`${ORIGIN}${ctx.hub.adminAuth.paths.preview}`))).status, 200);
+  assert.equal((await ctx.hub.fetch(makeRequest(`${ORIGIN}/`, { method: "HEAD" }))).status, 200);
+  assert.equal((await ctx.hub.fetch(makeRequest(`${ORIGIN}/`, { method: "POST" }))).status, 405);
+});
+
+test("`landing: false` leaves / to whoever owns it", async () => {
+  const ctx = makeHub({ config: { landing: false } });
+  assert.equal(await ctx.hub.handle(makeRequest(`${ORIGIN}/`)), null);
+  assert.equal((await ctx.hub.fetch(makeRequest(`${ORIGIN}/`))).status, 404);
+});

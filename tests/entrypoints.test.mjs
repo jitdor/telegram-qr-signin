@@ -76,8 +76,8 @@ test("a site's entry point is small: it loads none of the hub's console, stores 
 test("package.json exports the site entry point", () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(pkg.exports["./site"], { types: "./types/site.d.ts", default: "./src/hub/site.js" });
-  assert.equal(pkg.exports["./migrations/hub-d1-upgrade-2.0.sql"], "./migrations/hub-d1-upgrade-2.0.sql");
-  assert.equal(pkg.version, "2.0.0");
+  assert.equal(pkg.exports["./migrations/hub-d1-upgrade-1.2.sql"], "./migrations/hub-d1-upgrade-1.2.sql");
+  assert.equal(pkg.version, "1.2.0");
 });
 
 test("the site entry point can be imported by its package name, as a site would", async () => {

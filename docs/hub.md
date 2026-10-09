@@ -129,7 +129,7 @@ A key is how a site proves who it is to the hub: `Authorization: Bearer tqk_<sit
 - **A site's key opens only that site.** The hub works out which site is asking from the key, never
   from the request, so a site sees only its own sign-ins and its own block list. There is no call to
   read the access list, another site, or the admins.
-- A site with no key (one added by hand, or from before 2.0) cannot sign anyone in; the console flags
+- A site with no key (one added by hand, or from before 1.2) cannot sign anyone in; the console flags
   it on the site's page.
 - **Keep it in a secret** (`wrangler secret put HUB_KEY`), not in the repository. The key is logged
   nowhere by the hub; the audit log records that a key was made, not what it was.

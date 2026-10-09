@@ -78,7 +78,7 @@ export default {
 ```
 
 ```bash
-npm install github:jitdor/telegram-qr-signin#semver:^2.0.0
+npm install github:jitdor/telegram-qr-signin#semver:^1.2.0
 wrangler secret put HUB_KEY
 wrangler secret put SESSION_SECRET
 # vars in wrangler.jsonc: HUB_URL, TELEGRAM_BOT_USERNAME. No bindings: no D1, no KV, no Durable Object.
@@ -247,12 +247,12 @@ Work down this list; each line says what you should see.
 - [ ] An open site keys its own accounts on the Telegram **id**, never the username, and escapes names.
 - [ ] Rate limiting sits in front of the sign-in page (the hub has none of its own).
 
-## 8. Moving a site from 1.x
+## 8. Moving a site from 1.0 or 1.1
 
-In 1.x a site bound the hub's database and shared its login store. That is gone in 2.0: **a site no
+In 1.0 and 1.1 a site bound the hub's database and shared its login store. That is gone in 1.2: **a site no
 longer touches the hub's data**, which is also what lets it run anywhere. To move one:
 
-1. Run `migrations/hub-d1-upgrade-2.0.sql` against the hub's database (adds the table for keys).
+1. Run `migrations/hub-d1-upgrade-1.2.sql` against the hub's database (adds the table for keys).
 2. Deploy the new hub. Existing sites stop working until they have a key.
 3. In the console, open each site → **Site key** → **Make a key**, and put it in that site's secrets as
    `HUB_KEY`, with `HUB_URL=https://<hub>/hub-api`.
@@ -260,6 +260,6 @@ longer touches the hub's data**, which is also what lets it run anywhere. To mov
    `createSiteAuth({ hub: { url, key }, botUsername, session })`, and delete its D1 and KV bindings:
    `registry`, `store` and `namespace` are no longer options and throw if passed.
 5. Deploy the site. Sessions stay valid: the cookie is signed with the site's own `session.secret`,
-   which did not change. One exception: a 1.x site that worked out its own id named its cookie
-   `site_session`, and 2.0 names it `<site id>_session`, so those people would have to sign in once
+   which did not change. One exception: a 1.0 or 1.1 site that worked out its own id named its cookie
+   `site_session`, and 1.2 names it `<site id>_session`, so those people would have to sign in once
    more. To keep them signed in, pass `session: { secret, cookieName: "site_session" }`.

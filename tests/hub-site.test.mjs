@@ -1,4 +1,4 @@
-// A site as it is deployed in 2.0: it holds the hub's address and its own key, and nothing else of
+// A site as it is deployed from 1.2: it holds the hub's address and its own key, and nothing else of
 // the hub's. Everything it learns, it learns by asking the hub over HTTPS.
 
 import test, { mock } from "node:test";

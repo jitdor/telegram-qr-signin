@@ -121,8 +121,7 @@ export function createHub(config) {
     },
     branding: {
       title: "Hub admin — sign in",
-      heading: "🔐 Hub admin",
-      subtitle: "Scan with Telegram to manage sites and who can sign in to them. Super admins only.",
+      siteName: "Hub admin",
       deniedText: "Your Telegram account isn't a super admin of this hub.",
       botDeniedText: "🔒 You're not a super admin of this hub.",
       botSuccessText: "✅ Signed in to the hub admin console — head back to your browser tab.",

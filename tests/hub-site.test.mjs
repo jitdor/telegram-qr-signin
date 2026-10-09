@@ -345,17 +345,19 @@ const visible = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?
 test("a hub site's sign-in page names the site and shows its host", async () => {
   const ctx = await setup();
   const html = await loginHtml(ctx.acme, ACME);
-  assert.match(html, /<h1>Sign in to Acme dashboard<\/h1>/);
   assert.match(html, /<title>Sign in to Acme dashboard<\/title>/);
+  assert.match(html, /<span class="tqa-brand-name">Acme dashboard<\/span>/);
+  assert.match(html, /<span class="tqa-mark" aria-hidden="true">A<\/span>/, "the mark is the first letter of the name");
+  assert.match(html, /<p class="tqa-name"[^>]*>Acme dashboard<\/p>/);
   assert.match(html, /<p class="tqa-site">acme\.example<\/p>/);
-  assert.match(visible(html), /Sign in to Acme dashboard acme\.example/);
+  assert.match(html, /<dt>Destination<\/dt><dd>acme\.example<\/dd>/);
   assert.doesNotMatch(visible(html), /acme_|namespace/i, "the id itself is never shown as text");
 });
 
 test("a port is part of the host shown, and each site names itself", async () => {
   const ctx = await setup();
   await ctx.registry.addOrigin("forum", "https://forum.example:8443");
-  assert.match(await loginHtml(ctx.forum, FORUM), /Sign in to The forum/);
+  assert.match(await loginHtml(ctx.forum, FORUM), /<title>Sign in to The forum<\/title>/);
   assert.match(await loginHtml(ctx.forum, "https://forum.example:8443"), /class="tqa-site">forum\.example:8443</);
   assert.doesNotMatch(await loginHtml(ctx.acme, ACME), /The forum/);
 });
@@ -365,11 +367,11 @@ test("the page follows a rename in the console, within the half minute the name 
   let now = Date.now();
   const clock = mock.method(Date, "now", () => now);
   try {
-    assert.match(await loginHtml(ctx.acme, ACME), /Sign in to Acme dashboard/);
+    assert.match(await loginHtml(ctx.acme, ACME), /<span class="tqa-brand-name">Acme dashboard<\/span>/);
     await ctx.registry.updateNamespace("acme", { name: "Acme HQ" });
-    assert.match(await loginHtml(ctx.acme, ACME), /Sign in to Acme dashboard/, "still the remembered name");
+    assert.match(await loginHtml(ctx.acme, ACME), /<span class="tqa-brand-name">Acme dashboard<\/span>/, "still the remembered name");
     now += 31_000;
-    assert.match(await loginHtml(ctx.acme, ACME), /<h1>Sign in to Acme HQ<\/h1>/);
+    assert.match(await loginHtml(ctx.acme, ACME), /<span class="tqa-brand-name">Acme HQ<\/span>/);
   } finally {
     clock.mock.restore();
   }
@@ -379,7 +381,7 @@ test("a heading the site sets itself is kept, with the host still shown", async 
   const ctx = await setup();
   const site = makeSite(ctx, "acme", { branding: { heading: "📚 Internal docs" } });
   const html = await loginHtml(site, ACME);
-  assert.match(html, /<h1>📚 Internal docs<\/h1>/);
+  assert.match(html, /<span class="tqa-v tqa-v-wait">📚 Internal docs<\/span>/);
   assert.match(html, /class="tqa-site">acme\.example</);
 });
 
@@ -391,7 +393,8 @@ test("if the hub cannot name the site the page still shows, with the host alone"
     hub: { fetch: (url, init) => (new URL(url).pathname.endsWith("/site") ? Promise.reject(new Error("down")) : ctx.hub.fetch(new Request(url, init))) },
   });
   const html = await loginHtml(site, ACME);
-  assert.match(html, /<h1>Sign in with Telegram<\/h1>/);
+  // Without a name from the hub, the pass is named after the address it is served from.
+  assert.match(html, /<span class="tqa-brand-name">Acme<\/span>/);
   assert.match(html, /class="tqa-site">acme\.example</);
   assert.equal(errors.length, 1);
 });

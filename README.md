@@ -20,13 +20,14 @@ Zero dependencies. One file per concern, no build step. Runs on Cloudflare Worke
 Node 22.13+.
 
 <p align="center">
-  <img src="docs/img/signin-dark.png" alt="The sign-in page in dark mode: a card with the site's name and domain, a framed QR code, and three steps" width="300">
+  <img src="docs/img/signin-desktop.png" alt="The sign-in page on a computer: an orange page with the headline 'Your pass is ready. Scan it to sign in.' and a boarding-pass ticket carrying the site's name, its domain and a QR code on a perforated stub" width="480">
   &nbsp;
-  <img src="docs/img/signin-phone.png" alt="The same page on a phone in light mode, leading with an Open Telegram button" width="230">
+  <img src="docs/img/signin-phone.png" alt="The same page on a phone, leading with an Open Telegram button" width="190">
 </p>
 
-The sign-in page follows the visitor's light or dark setting, leads with a button on phones, and
-shows the site's name and domain so people can see where they are signing in. With the optional
+The sign-in page is a boarding pass: the site's name and domain on a ticket, a QR code on its stub
+(or, on phones, the button that opens Telegram), and a status that moves from "Awaiting scan" to a
+green ADMITTED stamp. It shows the site's name and domain so people can see where they are signing in. With the optional
 [hub](#one-bot-many-sites-the-hub) there is also an admin console:
 
 <p align="center">
@@ -438,33 +439,48 @@ to check it behaves.
 
 ## Theming
 
-The built-in page needs no styling to look right: it follows the visitor's light or dark setting,
-marks the card with the site's initials (or your logo), shows the site's domain as a chip, and
-walks through the three steps as the sign-in progresses. It makes no request of its own: no fonts,
-no images, no scripts from anywhere else, and its tab icon is inline.
+The built-in page needs no styling to look right. It is laid out as a boarding pass and follows the
+device it is opened on: a computer shows the QR and an "open it here" link; a phone leads with an
+**Open Telegram** button and keeps the QR behind "Signing in on another device?"; a tablet shows both,
+side by side when held sideways and stacked when upright. The pass carries the site's name in big
+letters, its first letter as the mark in the corner and the address it is served from top right and as
+the destination, and spells out that no phone number or code is needed. Its status follows the
+sign-in (Awaiting scan, then Signed in with an ADMITTED stamp; Expired and Not allowed have their own
+endings). It makes no request of its own: no fonts, no images, no scripts from anywhere else, and its
+tab icon is inline.
+
+Where the name comes from: `branding.siteName` if you set it, else the hub's site name, else the first
+label of the address the page is served from (`courier.example.com` becomes "Courier"). The address comes from
+the request. With none of those the mark is Telegram's plane.
 
 Restyle it:
 
 ```js
 branding: {
   title: "Acme — Sign in",
-  heading: "📈 Acme Dashboard",
-  subtitle: "Scan with Telegram. Nothing to type.",
-  accent: "#0ea5e9",                        // button, status dot, focus ring
-  background: "#0e1a2f",                    // page behind the card
-  gradientFrom: "#0ea5e9", gradientTo: "#6366f1",   // two soft glows over the background
-  qrDark: "#0f172a", qrLight: "#ffffff",
-  logoHtml: '<img src="data:image/svg+xml;base64,..." alt="" width="48">',
+  siteName: "Acme Dashboard",               // the pass's name; its first letter is the mark
+  accent: "#0ea5e9",                        // the page colour; text on it turns white if that reads better
+  heading: "Your pass is ready.",           // headline, first line
+  scanHeading: "Scan it to sign in.",       // second line on a computer or tablet
+  tapHeading: "Tap to sign in.",            // second line on a phone
+  logoHtml: '<img src="data:image/svg+xml;base64,..." alt="" width="44">',  // replaces the mark
   botSuccessText: "✅ You're in — back to your browser.",
 }
 ```
 
-Setting your own `background` keeps a light card on that colour instead of following the visitor's
-theme, since a dark card could not promise to stay readable on a colour it did not choose. Where
-white text sits on your brand colours (the mark, the buttons, the ticks) they are darkened slightly
-so it stays legible whatever you pick; glows and lines use them as given. A `<link rel="icon">` in
-`headHtml` replaces the built-in tab icon. The steps' wording is `stepsLabel`, `stepOneText`,
-`stepTwoText` and `stepThreeText`. Motion is switched off for visitors who ask for less of it.
+Every other word on the page can be replaced too (`kickerText`, `destinationLabel`, `phoneText`,
+`codeText`, `stepText`, `nextText`, `stampText`, `footText`, `mobileFootText`, `showQrText`, …; see
+`DEFAULT_BRANDING`), for translation or a different tone. The display type falls back to a heavy
+system font because the page downloads none; to use your own, put an `@font-face` and
+`:root { --tqa-display: "Your Font", ... }` in `headHtml`. `--tqa-font` and `--tqa-mono` work the
+same way. A `<link rel="icon">` in `headHtml` replaces the built-in tab icon. Motion is switched off
+for visitors who ask for less of it.
+
+> **Upgrading from 1.2:** the page was redesigned, so the options that styled the old card are
+> gone: `subtitle`, `background`, `gradientFrom`, `gradientTo`, `qrDark`, `qrLight` and the
+> three-step list (`stepsLabel`, `stepOneText`, `stepTwoText`, `stepThreeText`). They are ignored,
+> not errors. `accent` now colours the whole page, and `heading` is the first line of the headline
+> rather than a title above the card: to name the site, use `siteName`.
 
 **The QR is always an https link.** The QR image encodes the `https://t.me/<bot>?start=…` deep
 link, or with `qrOrigin` set an address on your own domain that redirects to it (see
@@ -489,16 +505,17 @@ that chip when Telegram was opened from a link in the browser) or `↩ To go bac
 to Chrome.` on Android. Computers get nothing, since their browser signs itself in. Turn it off with
 `createStartHandler(auth, { showReturnHint: false })`.
 
-Text is customisable via `branding.mobileLinkText`, `mobileSubtitle`, `qrHintText` and
-`qrLinkTitle`; the page a phone sees for an ended code via `scanEndedHeading` and `scanEndedText`.
+The button and QR wording is `branding.mobileLinkText`, `tabletLinkText`, `mobileSubtitle`,
+`qrHintText` and `qrLinkTitle`; the page a phone sees for an ended code uses `scanEndedHeading` and
+`scanEndedText`.
 A custom `renderLoginPage` should keep this: show `qrSvg` (it already encodes `qrLink`), and link
 the QR and the button to `appLink`, in the same tab.
 
 Or replace the page entirely:
 `renderLoginPage({ token, deepLink, appLink, qrLink, qrSvg, error, pollPath, pollIntervalMs, redirectTo, origin, site })`
 returns an HTML string (or a promise of one). `origin` is where the page is being served from; `site`
-(`{ name, host }`, supplied by the [hub](#one-bot-many-sites-the-hub)) is shown under the heading, and
-`name` becomes "Sign in to <name>" unless you set `branding.heading`. The contract a replacement must keep is polling `pollPath` and handling the
+(`{ name, host }`, supplied by the [hub](#one-bot-many-sites-the-hub)) is the pass's name and address,
+and `name` becomes the title "Sign in to <name>" unless you set `branding.title`. The contract a replacement must keep is polling `pollPath` and handling the
 five statuses in `POLL_STATUSES`: `pending` · `confirmed` · `expired` · `invalid` · `denied`. The
 built-in page's polling script is exported, so a custom page only needs to supply markup:
 

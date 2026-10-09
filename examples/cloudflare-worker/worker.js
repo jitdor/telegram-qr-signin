@@ -58,8 +58,7 @@ function buildAuth(env) {
 
     branding: {
       title: "Demo — Sign in",
-      heading: "📈 Demo Dashboard",
-      subtitle: "Scan with Telegram to sign in. Only members of the team group can get in.",
+      siteName: "Demo Dashboard",
       accent: "#6366f1",
     },
   });

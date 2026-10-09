@@ -446,8 +446,9 @@ side by side when held sideways and stacked when upright. The pass carries the s
 letters, its first letter as the mark in the corner and the address it is served from top right and as
 the destination, and spells out that no phone number or code is needed. Its status follows the
 sign-in (Awaiting scan, then Signed in with an ADMITTED stamp; Expired and Not allowed have their own
-endings). It makes no request of its own: no fonts, no images, no scripts from anywhere else, and its
-tab icon is inline.
+endings. Its type is Archivo (headline and name), Inter and JetBrains Mono, all SIL OFL, bundled in
+`src/fonts` and served by your own app (see below). It makes no request to anyone else: no font
+service, no images, no scripts from anywhere else, and its tab icon is inline.
 
 Where the name comes from: `branding.siteName` if you set it, else the hub's site name, else the first
 label of the address the page is served from (`courier.example.com` becomes "Courier"). The address comes from
@@ -470,10 +471,16 @@ branding: {
 
 Every other word on the page can be replaced too (`kickerText`, `destinationLabel`, `phoneText`,
 `codeText`, `stepText`, `nextText`, `stampText`, `footText`, `mobileFootText`, `showQrText`, …; see
-`DEFAULT_BRANDING`), for translation or a different tone. The display type falls back to a heavy
-system font because the page downloads none; to use your own, put an `@font-face` and
-`:root { --tqa-display: "Your Font", ... }` in `headHtml`. `--tqa-font` and `--tqa-mono` work the
-same way. A `<link rel="icon">` in `headHtml` replaces the built-in tab icon. Motion is switched off
+`DEFAULT_BRANDING`), for translation or a different tone.
+
+**Fonts.** `auth.handle()` serves the three fonts at `<basePath>/fonts/<name>-<hash>.woff2` (so
+`auth.paths.fonts` is `/auth/fonts` by default), cached for a year, and the page preloads them. They
+are subset to Basic Latin, Latin-1 and common punctuation (about 63 KB in all); other scripts use the
+system font. Nothing else is needed as long as `/auth/*` reaches `auth.handle()`, which it must for
+the poll to work anyway. A custom `renderLoginPage` is given `fontsPath` and can use
+`fontFaceCss(fontsPath)` from `telegram-qr-signin/fonts`. To use your own fonts instead, put an
+`@font-face` and `:root { --tqa-display: "Your Font", ...; }` in `headHtml` (`--tqa-font` and
+`--tqa-mono` work the same way). `scripts/build-fonts.sh` regenerates the bundled files. A `<link rel="icon">` in `headHtml` replaces the built-in tab icon. Motion is switched off
 for visitors who ask for less of it.
 
 > **Upgrading from 1.2:** the page was redesigned, so the options that styled the old card are

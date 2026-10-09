@@ -55,6 +55,9 @@
       "default": "./src/do.js"
     },
     "./qr": "./src/qr.js",
+    "./fonts": {
+      "default": "./src/fonts/index.js"
+    },
     "./session": "./src/session.js",
     "./bot": "./src/bot.js",
     "./migrations/d1.sql": "./migrations/d1.sql",

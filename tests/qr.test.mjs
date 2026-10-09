@@ -473,11 +473,27 @@ test("the page and the code-ended page make no request of their own: nothing ext
   for (const html of [renderLoginPage({ ...BASE, site: { name: "Docs", host: "docs.example.com" } }), renderScanEndedPage({})]) {
     const withoutDataUris = html.replace(/url\("data:[^"]*"\)/g, "").replace(/<link rel="icon" href="data:[^"]*">/, "");
     assert.doesNotMatch(withoutDataUris, /https?:\/\//, "no absolute URL anywhere");
-    assert.doesNotMatch(html, /@import|@font-face|<img|<iframe|<link rel="stylesheet"/i);
+    assert.doesNotMatch(html, /@import|@font-face|<img|<iframe|<link rel="stylesheet"/i, "without fontsPath there is nothing to fetch fonts from");
     assert.doesNotMatch(html, /<script src=/i);
   }
 });
 
+test("given a fontsPath the page uses the bundled fonts from that same origin, and still nothing external", () => {
+  for (const html of [renderLoginPage({ ...BASE, fontsPath: "/auth/fonts" }), renderScanEndedPage({ fontsPath: "/auth/fonts" })]) {
+    const urls = [...html.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]).filter((u) => !u.startsWith("data:"));
+    assert.equal(urls.length, 3, "one file per face");
+    for (const url of urls) assert.match(url, /^\/auth\/fonts\/(archivo-display|inter|jetbrains-mono)-[0-9a-f]{8}\.woff2$/);
+    assert.equal(html.match(/<link rel="preload" href="\/auth\/fonts\/[^"]+" as="font" type="font\/woff2" crossorigin>/g).length, 3);
+    for (const family of ["TQA Display", "TQA Sans", "TQA Mono"]) assert.match(html, new RegExp(`font-family: "${family}"`));
+    assert.match(html, /font-display: swap/);
+    assert.doesNotMatch(html.replace(/url\("data:[^"]*"\)/g, "").replace(/<link rel="icon" href="data:[^"]*">/, ""), /https?:\/\//);
+  }
+  // A path that could break out of the CSS or markup is not used at all.
+  for (const bad of ['/x"); }<script>', "fonts", "/a/../b", "//evil.example"]) {
+    const html = renderLoginPage({ ...BASE, fontsPath: bad });
+    assert.doesNotMatch(html, /@font-face|rel="preload"/, bad);
+  }
+});
 test("motion is switched off for people who ask for less of it, and keyboard focus is always visible", () => {
   const html = renderLoginPage(BASE);
   assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);

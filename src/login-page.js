@@ -19,6 +19,8 @@
 // `branding`. A replacement can reuse the polling script via `pollScript()` and supply only the
 // markup — see POLL_STATUSES in provider.js for the contract it implements.
 
+import { fontFaceCss, fontPreloadLinks } from "./fonts/index.js";
+
 export const DEFAULT_BRANDING = {
   title: "Sign in",
   // The headline, one line per field. The second line depends on the device and the sign-in state.
@@ -157,8 +159,9 @@ function faviconLink(branding, letter) {
  * stacked below it). `data-tqa-state` on <html> (set by the polling script) drives the endings, and
  * `data-tqa-view` picks between the button and the QR on a phone.
  */
-function loginStyles(branding) {
+function loginStyles(branding, fontsPath) {
   return `
+  ${fontFaceCss(fontsPath)}
   :root {
     color-scheme: light;
     --tqa-accent: ${branding.accent};
@@ -170,11 +173,11 @@ function loginStyles(branding) {
     --tqa-ok: #1d6b43;
     --tqa-bad: #b3261e;
     --tqa-notch: 14px;
-    /* Heavy, tight display type. No font is downloaded: a site that wants a specific one can set
-       --tqa-display (and --tqa-font, --tqa-mono) from branding.headHtml. */
-    --tqa-display: "Archivo Black", "Anton", Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", system-ui, sans-serif;
-    --tqa-font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --tqa-mono: ui-monospace, "SF Mono", "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    /* The bundled fonts (served by the app itself, see src/fonts), then the best the system has. A site
+       that wants its own can set --tqa-display, --tqa-font and --tqa-mono from branding.headHtml. */
+    --tqa-display: "TQA Display", "Archivo Black", Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", system-ui, sans-serif;
+    --tqa-font: "TQA Sans", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --tqa-mono: "TQA Mono", ui-monospace, "SF Mono", "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
   }
   *, *::before, *::after { box-sizing: border-box; }
   html, body { min-height: 100%; }
@@ -204,8 +207,8 @@ function loginStyles(branding) {
   }
   .tqa-stage { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(1.5rem, 5vh, 3.5rem) 0 1.5rem; }
   .tqa-headline {
-    margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 8.4vw, 3.9rem)/0.94 var(--tqa-display);
-    letter-spacing: -0.04em; text-transform: uppercase; text-wrap: balance;
+    margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 9.9vw, 3.9rem)/0.94 var(--tqa-display);
+    letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance;
   }
   .tqa-hl { display: block; }
   .tqa-error {
@@ -223,7 +226,7 @@ function loginStyles(branding) {
   .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.72rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
   .tqa-name {
     margin: 0.6rem 0 0; padding-bottom: 1rem; border-bottom: 2px solid var(--tqa-ink);
-    font: 900 calc(min(19cqw, 6.4rem) * var(--tqa-name-scale, 1))/0.9 var(--tqa-display); letter-spacing: -0.04em; text-transform: uppercase;
+    font: 900 calc(min(23cqw, 6.8rem) * var(--tqa-name-scale, 1))/0.9 var(--tqa-display); letter-spacing: -0.04em; text-transform: uppercase;
     overflow-wrap: break-word; text-wrap: balance;
   }
   .tqa-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; margin: 18px 0 0; }
@@ -407,6 +410,8 @@ function topBar({ branding, name, letter, host }) {
  * @param {number} params.pollIntervalMs
  * @param {object} [params.branding]
  * @param {string} [params.redirectTo="/"]  Where to send the browser once signed in.
+ * @param {string} [params.fontsPath]  Where the app serves the bundled fonts from (`auth.paths.fonts`).
+ *   Without it the page uses the system fonts.
  * @param {string} [params.origin]    The origin this page is being served from, when the request is
  *   known. It supplies the address shown on the pass when `site.host` is not given.
  * @param {{ name?: string, host?: string }} [params.site]  Which site this is. `name` is the pass's
@@ -427,7 +432,7 @@ export function renderLoginPage(params) {
   const text = (key) => escapeHtml(branding[key]);
   const withName = (key) => escapeHtml(String(branding[key]).replace("{name}", name || host || ""));
   const nameLength = [...name].length;
-  const nameScale = nameLength > 8 ? Math.max(0.4, 8 / nameLength).toFixed(2) : "1";
+  const nameScale = nameLength > 7 ? Math.max(0.4, 7 / nameLength).toFixed(2) : "1";
   const step = (n) => escapeHtml(String(branding.stepText).replace("{n}", n));
 
   return `<!DOCTYPE html>
@@ -440,8 +445,9 @@ export function renderLoginPage(params) {
 <meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(branding.title)}</title>
 ${faviconLink(branding, letter)}
+${fontPreloadLinks(params.fontsPath)}
 ${branding.headHtml}
-<style>${loginStyles(branding)}</style>
+<style>${loginStyles(branding, params.fontsPath)}</style>
 </head>
 <body>
   <div class="tqa-page">
@@ -513,7 +519,7 @@ ${pollScript({
  * What a phone shows when it opens /auth/q/<token> for a code that expired, was already used or
  * never existed. Takes the sign-in page's `branding`, and looks like the sign-in page it came from.
  */
-export function renderScanEndedPage({ branding: overrides } = {}) {
+export function renderScanEndedPage({ branding: overrides, fontsPath } = {}) {
   const branding = { ...DEFAULT_BRANDING, ...(overrides ?? {}) };
   const letter = firstLetter(branding.siteName);
   return `<!DOCTYPE html>
@@ -526,8 +532,9 @@ export function renderScanEndedPage({ branding: overrides } = {}) {
 <meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(branding.title)}</title>
 ${faviconLink(branding, letter)}
+${fontPreloadLinks(fontsPath)}
 ${branding.headHtml}
-<style>${loginStyles(branding)}
+<style>${loginStyles(branding, fontsPath)}
   .tqa-ticket.tqa-ticket-ended { grid-template-columns: minmax(0, 1fr); }
   .tqa-ended-title { margin: 0.7rem 0 0; font: 900 clamp(2.2rem, 10vw, 3.4rem)/0.94 var(--tqa-display); letter-spacing: -0.03em; text-transform: uppercase; text-wrap: balance; }
   .tqa-ended-text { max-width: 32rem; margin: 1rem 0 0; font-size: 1rem; color: var(--tqa-muted); text-wrap: pretty; }

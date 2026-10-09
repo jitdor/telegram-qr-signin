@@ -311,6 +311,8 @@ export interface RenderLoginPageParams {
   qrSvg: string;
   error?: string;
   pollPath: string;
+  /** Where the app serves the bundled fonts from (`auth.paths.fonts`). Without it the page uses system fonts. */
+  fontsPath?: string;
   pollIntervalMs?: number;
   branding?: Branding;
   redirectTo?: string;
@@ -360,7 +362,7 @@ export type GuardResult =
 export interface TelegramQrAuth {
   namespace: string;
   basePath: string;
-  paths: { poll: string; login: string; logout: string; qr: string; scan: string };
+  paths: { poll: string; login: string; logout: string; qr: string; scan: string; fonts: string };
   cookieName: string;
   tokenTtlSeconds: number;
 

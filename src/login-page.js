@@ -230,9 +230,13 @@ function loginStyles(branding, fontsPath) {
     -webkit-mask: ${MASK_LOCK} center / contain no-repeat; mask: ${MASK_LOCK} center / contain no-repeat;
   }
   .tqa-site-open .tqa-lock::before { background: #ffc15e; -webkit-mask-image: ${MASK_UNLOCK}; mask-image: ${MASK_UNLOCK}; }
-  /* Lower-case text has its weight in the x-height, below the middle of the line, and browsers put text on whole device pixels, so padding alone
-     jumps between "a little low" and "too high". Measured on 1x, 2x and 3x screens, these values land the x-height within a third of a pixel of the middle. */
+  /* A host name is lower case, so it looks centred when its x-height is, not its line box. Where the browser can
+     trim the line box to the x-height and the baseline (text-box), equal padding around that centres it in any
+     font, with the pill the same 2.4em tall. Elsewhere, padding measured for the bundled Inter. */
   .tqa-host { min-width: 0; padding: 8.1px 12px 8.4px 10px; overflow-wrap: anywhere; }
+  @supports (text-box: trim-both ex alphabetic) {
+    .tqa-host { text-box: trim-both ex alphabetic; padding-block: calc((2.4em - 1ex) / 2); }
+  }
   .tqa-stage { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(1.5rem, 5vh, 3.5rem) 0 1.5rem; }
   .tqa-headline {
     margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 11.4vw, 4rem)/0.94 var(--tqa-display);
@@ -245,21 +249,18 @@ function loginStyles(branding, fontsPath) {
   }
 
   /* The ticket. The paper is painted by its two halves, so the notches can be real holes in it (masks,
-     below) that show the page through them. The ink edge is a drop shadow of each half, so it follows the
-     notches too, and the soft shadow sits underneath the whole ticket, where a hole lets it show. */
-  .tqa-ticket {
-    position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); color: var(--tqa-ink);
-    animation: tqa-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  }
+     below) that show the page through them. Each layer is drawn by the element above the one it follows:
+     a mask clips its own element's filter and shadows, so the ink edge is a drop shadow of the ticket,
+     around the masked halves, and the soft shadow belongs to .tqa-pass, outside that filter, where it lies
+     under the whole ticket and a hole lets it show. */
+  .tqa-pass { position: relative; isolation: isolate; animation: tqa-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   /* What box-shadow: 0 38px 50px -28px would draw, but drawn under the ticket rather than only around it. */
-  .tqa-ticket::after {
+  .tqa-pass::before {
     content: ""; position: absolute; z-index: -1; inset: 28px; transform: translateY(38px); pointer-events: none;
     background: color-mix(in srgb, var(--tqa-ink) 55%, transparent); filter: blur(25px);
   }
-  .tqa-main, .tqa-stub {
-    background: var(--tqa-paper); filter: drop-shadow(0 2px 0 var(--tqa-ink));
-    --tqa-bite: #0000 calc(var(--tqa-notch) - 0.5px), #000 calc(var(--tqa-notch) + 0.5px);
-  }
+  .tqa-ticket { display: grid; grid-template-columns: minmax(0, 1fr); color: var(--tqa-ink); filter: drop-shadow(0 2px 0 var(--tqa-ink)); }
+  .tqa-main, .tqa-stub { background: var(--tqa-paper); --tqa-bite: #0000 calc(var(--tqa-notch) - 0.5px), #000 calc(var(--tqa-notch) + 0.5px); }
   .tqa-main { min-width: 0; padding: 26px 24px 24px; container-type: inline-size; border-radius: 26px; }
   .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.66rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
   .tqa-name {
@@ -303,7 +304,21 @@ function loginStyles(branding, fontsPath) {
       radial-gradient(circle at 100% 0.75px, var(--tqa-bite)) 100% 0 / 51% 100% no-repeat;
   }
   .tqa-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
-  .tqa-qr-link { display: block; width: min(100%, 12.5rem); line-height: 0; transition: transform 0.2s ease; }
+  .tqa-qr-link { --tqa-qr-size: 12.5rem; display: block; width: min(100%, var(--tqa-qr-size)); line-height: 0; transition: transform 0.2s ease; }
+  /* The code is drawn with crisp edges, so at a size that isn't a whole number of device pixels per module
+     the modules come out unevenly, some a pixel wider than others. With the module count from the SVG
+     (--tqa-qr-modules, set on the link), the size goes to the nearest whole number of device pixels
+     (--tqa-qr-px) per module. Rounding up can take it up to half a module's width into the stub's padding. */
+  @supports (width: round(1px, 1px)) {
+    .tqa-qr-link {
+      --tqa-qr-px: 1px;
+      width: round(min(100%, var(--tqa-qr-size)), var(--tqa-qr-modules, 1) * var(--tqa-qr-px));
+    }
+    @media (resolution: 1.25dppx) { .tqa-qr-link { --tqa-qr-px: 0.8px; } }
+    @media (resolution: 1.5dppx) { .tqa-qr-link { --tqa-qr-px: calc(2px / 3); } }
+    @media (min-resolution: 2dppx) { .tqa-qr-link { --tqa-qr-px: 0.5px; } }
+    @media (min-resolution: 3dppx) { .tqa-qr-link { --tqa-qr-px: calc(1px / 3); } }
+  }
   .tqa-qr-link:hover { transform: translateY(-2px); }
   .tqa-qr svg { display: block; width: 100%; height: auto; }
   /* The code sits on the ticket's paper, with the three finder squares in the page colour. They stay
@@ -408,13 +423,13 @@ function loginStyles(branding, fontsPath) {
     .tqa-or::before, .tqa-or::after { border-top: 0; border-left: 1.5px dashed var(--tqa-rule); min-height: 1.5rem; }
     .tqa-app-title, .tqa-how { display: block; }
     .tqa-how { text-align: left; }
-    .tqa-qr-link { width: 11.5rem; }
+    .tqa-qr-link { --tqa-qr-size: 11.5rem; }
   }
   /* Tablet, held sideways: the button goes under the QR on the stub. */
   @media (hover: none) and (pointer: coarse) and (min-width: 900px) {
     .tqa-lbl-short { display: none; }
     .tqa-lbl-long { display: inline; }
-    .tqa-qr-link { width: min(100%, 9.5rem); }
+    .tqa-qr-link { --tqa-qr-size: 9.5rem; }
     .tqa-stub { gap: 10px; padding-top: 22px; padding-bottom: 22px; }
     .tqa-open { font-size: 0.9rem; padding: 0 14px; gap: 8px; min-height: 44px; }
   }
@@ -423,7 +438,7 @@ function loginStyles(branding, fontsPath) {
     .tqa-page { padding-left: 16px; padding-right: 16px; }
     .tqa-stub { align-items: stretch; padding: 24px 20px 22px; }
     .tqa-or { display: none; }
-    .tqa-qr-link { width: min(100%, 15rem); }
+    .tqa-qr-link { --tqa-qr-size: 15rem; }
     .tqa-how { display: block; }
     .tqa-foot { text-align: center; }
     .tqa-foot > .tqa-foot-desk { display: none; }
@@ -451,7 +466,7 @@ function loginStyles(branding, fontsPath) {
   html[data-tqa-state="expired"] .tqa-qr { display: flex !important; max-width: 20rem; }
   html[data-tqa-state="expired"] .tqa-msg-expired, html[data-tqa-state="denied"] .tqa-msg-denied { display: block; }
   @media (prefers-reduced-motion: reduce) {
-    .tqa-ticket, .tqa-stamp-mark { animation: none; }
+    .tqa-pass, .tqa-stamp-mark { animation: none; }
     .tqa-open, .tqa-retry, .tqa-qr-link { transition: none; }
     .tqa-open:active, .tqa-retry:active, .tqa-qr-link:hover { transform: none; }
   }
@@ -534,6 +549,8 @@ export function renderLoginPage(params) {
   const withName = (key) => escapeHtml(String(branding[key]).replace("{name}", name || host || ""));
   const nameScale = nameScaleFor(name);
   const step = (n) => escapeHtml(String(branding.stepText).replace("{n}", n));
+  // How many modules the code is across, when it says (qr.js does), so the page can size it on whole pixels.
+  const qrModules = Number(/\sdata-modules="(\d+)"/.exec(qrSvg ?? "")?.[1]) || 0;
 
   return `<!DOCTYPE html>
 <html lang="en" data-tqa-state="waiting" data-tqa-view="app">
@@ -558,7 +575,7 @@ ${branding.headHtml}
         <span class="tqa-hl"><span class="tqa-v tqa-v-wait"><span class="tqa-h-scan">${text("scanHeading")}</span><span class="tqa-h-tap">${text("tapHeading")}</span></span><span class="tqa-v tqa-v-ok">${text("approvedSubheading")}</span><span class="tqa-v tqa-v-expired">${text("expiredSubheading")}</span><span class="tqa-v tqa-v-denied">${text("deniedSubheading")}</span></span>
       </h1>
       ${errorHtml}
-      <div class="tqa-ticket">
+      <div class="tqa-pass"><div class="tqa-ticket">
         <section class="tqa-main">
           <div class="tqa-kicker"><span>${text("kickerText")}</span><span>${text("viaText")}</span></div>
           <p class="tqa-name" style="--tqa-name-scale: ${nameScale}">${escapeHtml(name || branding.title)}</p>
@@ -573,7 +590,7 @@ ${branding.headHtml}
         </section>
         <aside class="tqa-stub">
           <div class="tqa-qr" id="tqa-qr">
-            <a class="tqa-qr-link" href="${appLink}" title="${text("qrLinkTitle")}" aria-label="${text("qrLinkTitle")}">${qrSvg}</a>
+            <a class="tqa-qr-link" href="${appLink}"${qrModules ? ` style="--tqa-qr-modules: ${qrModules}"` : ""} title="${text("qrLinkTitle")}" aria-label="${text("qrLinkTitle")}">${qrSvg}</a>
             <p class="tqa-cap"><span class="tqa-cap-main">${text("scanText")}</span><span class="tqa-cap-other">${text("scanOtherText")}</span></p>
           </div>
           <a class="tqa-here" id="tqa-here" href="${appLink}">${text("qrHintText")}</a>
@@ -589,7 +606,7 @@ ${branding.headHtml}
           <p class="tqa-msg tqa-msg-denied" role="alert">${text("deniedText")}</p>
           <div class="tqa-stamp"><span class="tqa-stamp-mark">${text("stampText")}</span><p class="tqa-stamp-note">${withName("nextDoneText")}</p></div>
         </aside>
-      </div>
+      </div></div>
     </main>
     <footer class="tqa-foot"><span class="tqa-foot-desk">${text("footText")}</span><span class="tqa-foot-app">${text("mobileFootText")}</span><span class="tqa-foot-qr">${text("scanFootText")}</span>${branding.footerHtml ? `<p class="tqa-foot-extra">${branding.footerHtml}</p>` : ""}</footer>
   </div>
@@ -663,14 +680,14 @@ ${pageHead({
   <div class="tqa-page">
     ${top}
     <main class="tqa-stage">
-      <div class="tqa-ticket tqa-ticket-ended">
+      <div class="tqa-pass"><div class="tqa-ticket tqa-ticket-ended">
         <section class="tqa-main">
           <div class="tqa-kicker"><span>${escapeHtml(branding.kickerText)}</span><span>${escapeHtml(branding.viaText)}</span></div>
           <h1 class="tqa-ended-title">${escapeHtml(title)}</h1>
           <p class="tqa-ended-text">${escapeHtml(text)}</p>
           ${extraHtml}
         </section>
-      </div>
+      </div></div>
     </main>
   </div>
 </body>

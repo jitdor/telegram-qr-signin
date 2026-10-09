@@ -67,10 +67,10 @@ ${pageHead({
   .tqa-f-wide { grid-column: 1 / -1; }
   .tqa-field dd code { font: inherit; }
   .tqa-scopes { list-style: none; margin: 4px 0 0; padding: 0; }
-  .tqa-scopes li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 0; border-top: 1.5px dashed var(--tqa-rule); font-weight: 600; font-size: 1rem; line-height: 1.3; letter-spacing: -0.01em; }
+  .tqa-scopes li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 0; border-top: 1.5px dashed var(--tqa-rule); font-weight: 600; font-size: 0.92rem; line-height: 1.3; letter-spacing: -0.01em; }
   .tqa-scopes li:first-child { border-top: 0; padding-top: 4px; }
-  .tqa-scopes code { flex: none; font: 500 0.72rem/1.3 var(--tqa-mono); letter-spacing: 0.04em; color: var(--tqa-muted); }
-  .tqa-warn { margin: 22px 0 0; padding: 12px 14px; border: 2px solid var(--tqa-ink); border-radius: 12px; font-weight: 600; font-size: 0.92rem; line-height: 1.45; }
+  .tqa-scopes code { flex: none; font: 500 0.66rem/1.3 var(--tqa-mono); letter-spacing: 0.04em; color: var(--tqa-muted); }
+  .tqa-warn { margin: 22px 0 0; padding: 12px 14px; border: 2px solid var(--tqa-ink); border-radius: 12px; font-weight: 600; font-size: 0.85rem; line-height: 1.45; }
   .tqa-decide { display: flex; flex-direction: column; gap: 12px; width: 100%; margin: 0; }
   .tqa-ghost {
     display: flex; align-items: center; justify-content: center; width: 100%; min-height: 54px; padding: 0 20px; border: 2px solid var(--tqa-ink); border-radius: 16px;

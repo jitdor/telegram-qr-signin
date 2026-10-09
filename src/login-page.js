@@ -204,7 +204,7 @@ function loginStyles(branding, fontsPath) {
     color: var(--tqa-on); font: 16px/1.5 var(--tqa-font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
   }
   .tqa-page {
-    display: flex; flex-direction: column; width: min(100%, 50rem); min-height: 100vh; min-height: 100dvh; margin: 0 auto;
+    display: flex; flex-direction: column; width: min(100%, 47rem); min-height: 100vh; min-height: 100dvh; margin: 0 auto;
     padding: max(20px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
   }
   .tqa-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
@@ -238,7 +238,7 @@ function loginStyles(branding, fontsPath) {
     animation: tqa-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
   .tqa-main { min-width: 0; padding: 26px 24px 24px; container-type: inline-size; }
-  .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.72rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
+  .tqa-kicker { display: flex; justify-content: space-between; gap: 12px; font: 500 0.66rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
   .tqa-name {
     margin: 0.6rem 0 0; padding-bottom: 1rem; border-bottom: 2px solid var(--tqa-ink);
     font: 900 calc(min(23cqw, 6.8rem) * var(--tqa-name-scale, 1))/0.9 var(--tqa-display); letter-spacing: -0.04em; text-transform: uppercase;
@@ -246,8 +246,8 @@ function loginStyles(branding, fontsPath) {
   }
   .tqa-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; margin: 18px 0 0; }
   .tqa-field { min-width: 0; }
-  .tqa-field dt { font: 500 0.7rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
-  .tqa-field dd { margin: 4px 0 0; font-weight: 600; font-size: 1.12rem; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; text-wrap: balance; }
+  .tqa-field dt { font: 500 0.64rem/1.2 var(--tqa-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--tqa-muted); }
+  .tqa-field dd { margin: 4px 0 0; font-weight: 600; font-size: 1rem; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; text-wrap: balance; }
   .tqa-f-dest { grid-column: 1 / -1; }
   .tqa-f-next { display: none; }
   .tqa-status { display: inline-flex; align-items: center; gap: 0.5em; }
@@ -281,11 +281,11 @@ function loginStyles(branding, fontsPath) {
   .tqa-qr svg > rect:first-child { fill: var(--tqa-paper); }
   .tqa-qr svg > path { fill: var(--tqa-ink); }
   .tqa-qr svg .qr-eye { fill: color-mix(in srgb, var(--tqa-accent) 88%, #000); }
-  .tqa-cap { margin: 0; font: 500 0.74rem/1.4 var(--tqa-mono); letter-spacing: 0.15em; text-transform: uppercase; text-align: center; text-wrap: balance; }
+  .tqa-cap { margin: 0; font: 500 0.68rem/1.4 var(--tqa-mono); letter-spacing: 0.15em; text-transform: uppercase; text-align: center; text-wrap: balance; }
   .tqa-cap-other { display: none; }
   .tqa-here, .tqa-switch {
     appearance: none; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; color: var(--tqa-ink);
-    font: 600 0.95rem/1.35 var(--tqa-font); letter-spacing: -0.005em; text-align: center;
+    font: 600 0.88rem/1.35 var(--tqa-font); letter-spacing: -0.005em; text-align: center;
     text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px;
   }
   .tqa-switch { display: none; align-self: flex-start; text-align: left; }
@@ -300,20 +300,20 @@ function loginStyles(branding, fontsPath) {
   .tqa-open:active, .tqa-retry:active { transform: scale(0.985); }
   .tqa-open svg { flex: none; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
   .tqa-lbl-long { display: none; }
-  .tqa-how { display: none; margin: 0; font: 400 0.85rem/1.6 var(--tqa-mono); color: var(--tqa-muted); text-align: center; }
+  .tqa-how { display: none; margin: 0; font: 400 0.75rem/1.6 var(--tqa-mono); color: var(--tqa-muted); text-align: center; }
   .tqa-or {
     display: none; align-items: center; gap: 12px; width: 100%; font: 500 0.75rem/1 var(--tqa-mono); letter-spacing: 0.22em; text-transform: uppercase; color: var(--tqa-muted);
   }
   .tqa-or::before, .tqa-or::after { content: ""; flex: 1; border-top: 1.5px dashed var(--tqa-rule); }
-  .tqa-msg { display: none; width: 100%; margin: 0; font: 500 0.88rem/1.5 var(--tqa-mono); text-align: center; color: var(--tqa-bad); }
+  .tqa-msg { display: none; width: 100%; margin: 0; font: 500 0.78rem/1.5 var(--tqa-mono); text-align: center; color: var(--tqa-bad); }
   .tqa-stamp { display: none; width: 100%; min-height: 9rem; place-content: center; justify-items: center; gap: 16px; text-align: center; }
   .tqa-stamp-mark {
     display: inline-block; padding: 0.12em 0.4em 0.08em; border: 0.14em solid var(--tqa-ok); border-radius: 0.3em; color: var(--tqa-ok);
     font: 900 clamp(1.9rem, 8vw, 2.6rem)/1 var(--tqa-display); letter-spacing: -0.01em; text-transform: uppercase; transform: rotate(-6deg);
     animation: tqa-stamp 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) both;
   }
-  .tqa-stamp-note { margin: 0; font: 500 0.8rem/1.4 var(--tqa-mono); color: var(--tqa-muted); }
-  .tqa-foot { margin: 0; padding-top: 1rem; font: 500 0.8rem/1.5 var(--tqa-mono); }
+  .tqa-stamp-note { margin: 0; font: 500 0.72rem/1.4 var(--tqa-mono); color: var(--tqa-muted); }
+  .tqa-foot { margin: 0; padding-top: 1rem; font: 500 0.75rem/1.5 var(--tqa-mono); }
   .tqa-foot > span { display: none; }
   .tqa-foot > .tqa-foot-desk { display: inline; }
   .tqa-foot-extra { margin: 0.5rem 0 0; font-size: 0.8rem; }
@@ -326,17 +326,29 @@ function loginStyles(branding, fontsPath) {
   /* Wide enough for the stub to sit beside the ticket. */
   @media (min-width: 640px) {
     .tqa-main { padding: 30px 36px 28px; }
-    /* The first column carries the address and the status, which are the longest values. */
-    .tqa-fields { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) minmax(0, 1.1fr); column-gap: 14px; }
+    /* Columns the width of what is in them, sharing out whatever is left, so an address or "Tap Start, then Approve" stays on one line when it fits. */
+    .tqa-fields { grid-template-columns: repeat(3, auto); column-gap: 14px; }
     .tqa-f-dest { grid-column: auto; }
     .tqa-f-next { display: block; }
+    .tqa-field dd { font-size: 0.9rem; }
   }
   @media (min-width: 900px) {
-    .tqa-ticket { grid-template-columns: minmax(0, 1fr) 15rem; }
+    .tqa-ticket { grid-template-columns: minmax(0, 1fr) clamp(15rem, 33%, 19rem); }
     .tqa-stub { justify-content: center; padding: 28px 22px; border-top: 0; border-left: 1.5px dashed var(--tqa-rule); }
     .tqa-stub::before { top: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
     .tqa-stub::after { top: auto; right: auto; bottom: calc(var(--tqa-notch) * -1); left: calc(var(--tqa-notch) * -1 + 0.75px); }
     .tqa-stamp-mark { font-size: 1.8rem; }
+    /* Room to spare: the type steps down so the ticket reads as a ticket, not as a form. */
+    .tqa-headline { font-size: clamp(2rem, 9.9vw, 3.4rem); }
+    .tqa-name { font-size: calc(min(19cqw, 5.6rem) * var(--tqa-name-scale, 1)); }
+    .tqa-kicker, .tqa-field dt { font-size: 0.6rem; }
+    .tqa-field dd { font-size: 0.8rem; }
+    .tqa-cap { font-size: 0.62rem; }
+    .tqa-here, .tqa-switch { font-size: 0.8rem; }
+    .tqa-foot { font-size: 0.68rem; }
+    .tqa-how { font-size: 0.7rem; }
+    .tqa-msg { font-size: 0.74rem; }
+    .tqa-open, .tqa-retry { min-height: 50px; font-size: 1rem; }
   }
 
   /* Phones and tablets can't scan their own screen: they get the button. */
@@ -362,6 +374,9 @@ function loginStyles(branding, fontsPath) {
   @media (hover: none) and (pointer: coarse) and (min-width: 900px) {
     .tqa-lbl-short { display: none; }
     .tqa-lbl-long { display: inline; }
+    .tqa-qr-link { width: min(100%, 9.5rem); }
+    .tqa-stub { gap: 10px; padding-top: 22px; padding-bottom: 22px; }
+    .tqa-open { font-size: 0.9rem; padding: 0 14px; gap: 8px; min-height: 44px; }
   }
   /* Phone: the button first, and the QR for a second device one tap away. */
   @media (hover: none) and (pointer: coarse) and (max-width: 639.98px) {

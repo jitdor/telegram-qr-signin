@@ -92,14 +92,14 @@ the store is injected rather than in-process.
 
 ## Install
 
-Not on npm — install straight from GitHub. Releases are git tags (`v1.0.0`, `v1.1.0`, …), and npm
+Not on npm — install straight from GitHub. Releases are git tags (`1.0.0`, `1.1.0`, …), and npm
 resolves a semver range against them:
 
 ```bash
 npm install github:jitdor/telegram-qr-signin#semver:^1.0.0
 ```
 
-`^1.0.0` takes any 1.x release and never a breaking 2.0. Pin an exact release with `#v1.0.0`, or
+`^1.0.0` takes any 1.x release and never a breaking 2.0. Pin an exact release with `#1.0.0`, or
 track the unreleased tip of `main` with plain `github:jitdor/telegram-qr-signin`. npm records the
 exact commit it fetched in your lockfile, so **commit `package-lock.json`**: installs stay
 reproducible, and you only move when you choose to:
@@ -898,7 +898,7 @@ No network, no wrangler, no D1 emulator: the D1 tests run real SQLite (`node:sql
 real migration file, so the SQL that makes `confirm` single-use is actually exercised.
 
 Releases follow semver. To cut one: set `version` in `package.json`, commit, tag the commit
-`v<version>` and push the tag. npm resolves `#semver:` ranges against those tags.
+`<version>`, with no `v` prefix, and push the tag. npm resolves `#semver:` ranges against those tags.
 
 ---
 

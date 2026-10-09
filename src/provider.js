@@ -27,6 +27,7 @@ import { TelegramClient, displayName, toAuthUser } from "./telegram.js";
 import { anyUser, normalize as normalizeGate } from "./gates.js";
 import { renderLoginPage as defaultRenderLoginPage, renderScanEndedPage } from "./login-page.js";
 import { fontResponse } from "./fonts/index.js";
+import { previewFileName, previewResponse } from "./preview/index.js";
 
 /** The status values `/auth/poll` can return. A custom login page must understand all five. */
 export const POLL_STATUSES = ["pending", "confirmed", "expired", "invalid", "denied"];
@@ -131,6 +132,7 @@ export function createTelegramQrAuth(config) {
   const scanPrefix = `${scanPath}/`;
   const fontsPath = joinPath(basePath, "fonts");
   const fontsPrefix = `${fontsPath}/`;
+  const previewPath = joinPath(basePath, previewFileName());
 
   /** `<namespace>_<token>` — what the QR carries and what `/start` hands back. */
   function payloadFor(token) {
@@ -206,6 +208,7 @@ export function createTelegramQrAuth(config) {
       error,
       pollPath,
       fontsPath,
+      previewPath,
       pollIntervalMs,
       branding,
       redirectTo: (to !== undefined && sameSitePath(to)) || redirectTo,
@@ -466,6 +469,7 @@ export function createTelegramQrAuth(config) {
     if (url.pathname === loginPath) return loginResponse({ request });
     if (url.pathname.startsWith(scanPrefix)) return scan(request);
     if (url.pathname.startsWith(fontsPrefix)) return fontResponse(request, fontsPath);
+    if (url.pathname === previewPath) return previewResponse(request, previewPath);
     if (url.pathname === qrPath) {
       // For apps that render their own sign-in UI and just want the ingredients.
       const { token, deepLink, appLink, qrLink, svg, expiresIn } = await beginLogin({ request });
@@ -477,7 +481,7 @@ export function createTelegramQrAuth(config) {
   return {
     namespace,
     basePath,
-    paths: { poll: pollPath, login: loginPath, logout: logoutPath, qr: qrPath, scan: scanPath, fonts: fontsPath },
+    paths: { poll: pollPath, login: loginPath, logout: logoutPath, qr: qrPath, scan: scanPath, fonts: fontsPath, preview: previewPath },
     cookieName: codec.cookieName,
     tokenTtlSeconds,
 

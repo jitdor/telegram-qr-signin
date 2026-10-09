@@ -91,7 +91,18 @@ export function activityIcon(action) {
  * @param {Array} [p.sites]     The site list, for the sidebar.
  * @param {string} [p.active]   "overview", or a site's namespace.
  */
-export function renderShell({ title, body, adminPath, session, sites = [], active = "overview" }) {
+/**
+ * Rewrites each server-rendered UTC `<time datetime>` into the viewer's own timezone. Without
+ * JavaScript the UTC text stays, so the page is complete either way.
+ */
+export const LOCAL_TIME_SCRIPT = `for (const t of document.querySelectorAll("time[datetime]")) {
+  const d = new Date(t.dateTime);
+  if (isNaN(d)) continue;
+  t.textContent = d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
+  t.title = t.dateTime;
+}`;
+
+export function renderShell({ title, body, adminPath, session, sites = [], active = "overview", nonce }) {
   const shown = sites.slice(0, 10);
   return `<!DOCTYPE html>
 <html lang="en">
@@ -133,7 +144,7 @@ export function renderShell({ title, body, adminPath, session, sites = [], activ
   </aside>
   <div class="content"><main id="main">${body}</main></div>
 </div>
-</body>
+${nonce ? `<script nonce="${nonce}">${LOCAL_TIME_SCRIPT}</script>\n` : ""}</body>
 </html>`;
 }
 

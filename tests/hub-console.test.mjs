@@ -76,8 +76,11 @@ test("a bootstrap admin gets the dashboard, with security headers and no caching
   const csp = response.headers.get("Content-Security-Policy");
   assert.match(csp, /default-src 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);
-  assert.doesNotMatch(csp, /script-src/, "the console ships no JavaScript, so none is allowed");
-  assert.doesNotMatch(await response.text(), /<script/i);
+  assert.match(csp, /script-src 'nonce-[A-Za-z0-9+/=]+';/, "only the one nonce-pinned script may run");
+  assert.doesNotMatch(csp, /unsafe-inline'[^;]*script|script-src[^;]*unsafe/);
+  const html = await response.text();
+  assert.equal(html.match(/<script/gi).length, 1, "the console ships exactly one script: local time display");
+  assert.ok(html.includes(`<script nonce="${csp.match(/'nonce-([^']+)'/)[1]}">`));
 });
 
 test("pages do not use Referrer-Policy: no-referrer, which makes browsers send `Origin: null` on their own forms", async () => {

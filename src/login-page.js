@@ -221,7 +221,7 @@ function loginStyles(branding, fontsPath) {
   /* The address, in the shape of a browser's address bar: a lock on its own segment, then the host. */
   .tqa-site {
     display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 0 auto; border-radius: 999px; overflow: hidden;
-    background: var(--tqa-ink); color: #fff; font: 500 0.74rem/1.2 var(--tqa-mono);
+    background: var(--tqa-ink); color: #fff; font: 600 0.86rem/1.2 var(--tqa-font); letter-spacing: -0.005em;
     box-shadow: 0 0 0 1px color-mix(in srgb, #fff 14%, transparent) inset;
   }
   .tqa-lock { flex: none; display: grid; place-items: center; width: 30px; border-right: 1px solid color-mix(in srgb, #fff 24%, transparent); }
@@ -230,8 +230,9 @@ function loginStyles(branding, fontsPath) {
     -webkit-mask: ${MASK_LOCK} center / contain no-repeat; mask: ${MASK_LOCK} center / contain no-repeat;
   }
   .tqa-site-open .tqa-lock::before { background: #ffc15e; -webkit-mask-image: ${MASK_UNLOCK}; mask-image: ${MASK_UNLOCK}; }
-  /* Lower-case text has its weight in the x-height, about a pixel below the middle of the line; the extra bottom padding lifts it to the middle of the pill. */
-  .tqa-host { min-width: 0; padding: 7.5px 12px 8.5px 10px; overflow-wrap: anywhere; }
+  /* Lower-case text has its weight in the x-height, below the middle of the line, and browsers put text on whole device pixels, so padding alone
+     jumps between "a little low" and "too high". Measured on 1x, 2x and 3x screens, these values land the x-height within a third of a pixel of the middle. */
+  .tqa-host { min-width: 0; padding: 7.1px 12px 9.4px 10px; overflow-wrap: anywhere; }
   .tqa-stage { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: clamp(1.5rem, 5vh, 3.5rem) 0 1.5rem; }
   .tqa-headline {
     margin: 0 0 clamp(1.25rem, 3.5vw, 2rem); font: 900 clamp(2rem, 11.4vw, 4rem)/0.94 var(--tqa-display);

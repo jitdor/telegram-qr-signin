@@ -449,6 +449,28 @@ test("an app that supplies its own icon keeps it, whichever way it writes the li
   assert.equal((renderLoginPage({ ...BASE, branding: { headHtml: `<link rel="stylesheet" href="/x.css">` } }).match(/<link rel="icon"/g) ?? []).length, 1, "an unrelated link does not count");
 });
 
+test("any icon or manifest link from the app suppresses the built-in icon, so the app's own install icon wins", () => {
+  for (const headHtml of [
+    `<link rel="apple-touch-icon" href="/apple.png">`,
+    `<link rel="alternate icon" href="/mine.ico">`,
+    `<link rel="manifest" href="/manifest.webmanifest">`,
+    `<link href="/m.svg" type="image/svg+xml" rel='mask-icon'>`,
+    `<link rel=Apple-Touch-Icon-Precomposed href=/a.png>`,
+  ]) {
+    const html = renderLoginPage({ ...BASE, branding: { headHtml } });
+    assert.equal((html.match(/<link rel="icon"/g) ?? []).length, 0, headHtml);
+    assert.ok(html.includes(headHtml));
+  }
+  assert.equal((renderLoginPage({ ...BASE, branding: { headHtml: `<link rel="preload" href="/icon.png" as="image">` } }).match(/<link rel="icon"/g) ?? []).length, 1, "a link merely named icon does not count");
+});
+
+test("branding.favicon sets the tab icon by href or turns it off, and headHtml still outranks it", () => {
+  const icons = (branding) => renderLoginPage({ ...BASE, branding }).match(/<link rel="icon"[^>]*>/g) ?? [];
+  assert.deepEqual(icons({ favicon: "/fav.svg?a=1&b=2" }), [`<link rel="icon" href="/fav.svg?a=1&amp;b=2">`]);
+  assert.deepEqual(icons({ favicon: false }), []);
+  assert.deepEqual(icons({ favicon: "/fav.svg", headHtml: `<link rel="icon" href="/mine.png">` }), [`<link rel="icon" href="/mine.png">`], "only the app's own link remains");
+});
+
 test("the page is the accent colour, and the colour of its text follows from it", () => {
   const html = renderLoginPage(BASE);
   assert.match(html, /<meta name="color-scheme" content="light">/);

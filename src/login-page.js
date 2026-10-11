@@ -110,6 +110,9 @@ export const DEFAULT_BRANDING = {
   logoHtml: "",
   footerHtml: "",
   headHtml: "",
+  // The tab icon. "" draws the built-in one (the site's letter on a dark tile), a string is the href of
+  // your own, and false emits none. Whatever the app puts in `headHtml` (see appSuppliesIcon) wins over all three.
+  favicon: "",
 };
 
 const INK = "#17130f";
@@ -163,12 +166,29 @@ function textOn(color) {
   return (luminance + 0.05) / (inkLuminance + 0.05) >= 1.05 / (luminance + 0.05) ? INK : "#ffffff";
 }
 
+/** The `rel` values that mean the app already has an icon (or an install manifest, which carries its own). */
+const ICON_RELS = new Set(["icon", "shortcut", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon", "manifest"]);
+
 /**
- * A tab icon: the site's letter in the accent colour on a dark tile, unless the app already supplies
- * one in `headHtml`. An inline data: URI, so the browser does not go looking for /favicon.ico.
+ * Whether `headHtml` holds a <link> that supplies an icon or a web app manifest, however its `rel` is
+ * written: quoted either way or bare, in any case, among other tokens ("shortcut icon", "alternate icon").
+ */
+function appSuppliesIcon(headHtml) {
+  for (const match of String(headHtml ?? "").matchAll(/<link\b[^>]*?\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
+    const rel = match[1] ?? match[2] ?? match[3];
+    if (rel.toLowerCase().split(/\s+/).some((token) => ICON_RELS.has(token))) return true;
+  }
+  return false;
+}
+
+/**
+ * A tab icon, only when the app has none of its own. An icon or manifest link in `headHtml` always wins;
+ * otherwise `branding.favicon` (an href, or false for none); otherwise the site's letter in the accent
+ * colour on a dark tile. The built-in one is an inline data: URI, so the browser does not go looking for /favicon.ico.
  */
 function faviconLink(branding, letter) {
-  if (/rel\s*=\s*["']?(?:shortcut\s+)?icon/i.test(branding.headHtml)) return "";
+  if (appSuppliesIcon(branding.headHtml) || branding.favicon === false) return "";
+  if (typeof branding.favicon === "string" && branding.favicon) return `<link rel="icon" href="${escapeHtml(branding.favicon)}">`;
   const accent = escapeHtml(branding.accent);
   const glyph = letter
     ? `<text x="32" y="47" text-anchor="middle" font-family="Arial Black,Impact,Arial,sans-serif" font-weight="900" font-size="42" fill="${accent}">${escapeHtml(letter)}</text>`

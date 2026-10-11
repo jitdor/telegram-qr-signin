@@ -254,7 +254,10 @@ export interface Branding {
   /** Replaces the mark in the top-left corner. */
   logoHtml?: string;
   footerHtml?: string;
+  /** Extra tags for <head>. A <link> with rel icon, apple-touch-icon, mask-icon or manifest here replaces the built-in tab icon. */
   headHtml?: string;
+  /** The tab icon: an href of your own, or false for none. Left empty, the built-in letter tile is used unless `headHtml` has an icon. */
+  favicon?: string | false;
   botSuccessText?: string;
   botBadTokenText?: string;
   botExpiredText?: string;

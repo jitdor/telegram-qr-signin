@@ -480,7 +480,7 @@ system font. Nothing else is needed as long as `/auth/*` reaches `auth.handle()`
 the poll to work anyway. A custom `renderLoginPage` is given `fontsPath` and can use
 `fontFaceCss(fontsPath)` from `telegram-qr-signin/fonts`. To use your own fonts instead, put an
 `@font-face` and `:root { --tqa-display: "Your Font", ...; }` in `headHtml` (`--tqa-font` and
-`--tqa-mono` work the same way). `scripts/build-fonts.sh` regenerates the bundled files. A `<link rel="icon">` in `headHtml` replaces the built-in tab icon. Motion is switched off
+`--tqa-mono` work the same way). `scripts/build-fonts.sh` regenerates the bundled files. The built-in tab icon is only a fallback: any `<link>` in `headHtml` with `rel` of `icon`, `apple-touch-icon`, `mask-icon` or `manifest` replaces it, so your app's icons (and its install icon) always win. `branding.favicon` sets an icon by href, or `false` for none. Motion is switched off
 for visitors who ask for less of it.
 
 **Link previews.** Paste the sign-in address into Telegram, Slack, Discord, X or iMessage and it unfurls

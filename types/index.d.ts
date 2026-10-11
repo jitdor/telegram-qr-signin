@@ -256,8 +256,16 @@ export interface Branding {
   footerHtml?: string;
   /** Extra tags for <head>. A <link> with rel icon, apple-touch-icon, mask-icon or manifest here replaces the built-in tab icon. */
   headHtml?: string;
-  /** The tab icon: an href of your own, or false for none. Left empty, the built-in letter tile is used unless `headHtml` has an icon. */
+  /**
+   * The site's icons, each an href of your own. The built-in tab icon (the site's letter on a dark tile) is drawn
+   * only when the app supplies no icon of any kind, in `headHtml` or here; `favicon: false` turns it off. Links in
+   * `headHtml` win over these.
+   */
   favicon?: string | false;
+  /** The iOS home-screen icon (`<link rel="apple-touch-icon">`). */
+  appleTouchIcon?: string;
+  /** The web app manifest (`<link rel="manifest">`), which carries the Android install icons. */
+  manifest?: string;
   botSuccessText?: string;
   botBadTokenText?: string;
   botExpiredText?: string;

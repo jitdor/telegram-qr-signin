@@ -471,6 +471,25 @@ test("branding.favicon sets the tab icon by href or turns it off, and headHtml s
   assert.deepEqual(icons({ favicon: "/fav.svg", headHtml: `<link rel="icon" href="/mine.png">` }), [`<link rel="icon" href="/mine.png">`], "only the app's own link remains");
 });
 
+test("favicon, appleTouchIcon and manifest are written as links, per kind, and the app's own links win", () => {
+  // The library's own links only: the app's (written in headHtml as "/mine…") are in the page too.
+  const links = (branding) => (renderLoginPage({ ...BASE, branding }).match(/<link rel="(?:icon|apple-touch-icon|manifest)"[^>]*>/g) ?? []).filter((l) => !l.includes("/mine"));
+  const all = { favicon: "/f.svg", appleTouchIcon: "/a.png", manifest: "/m.webmanifest?x=1&y=2" };
+  assert.deepEqual(links(all), [`<link rel="icon" href="/f.svg">`, `<link rel="apple-touch-icon" href="/a.png">`, `<link rel="manifest" href="/m.webmanifest?x=1&amp;y=2">`]);
+
+  // Per kind: the app's own apple-touch-icon replaces the option, the other two still come from the options.
+  const partial = links({ ...all, headHtml: `<link rel="apple-touch-icon" href="/mine.png">` });
+  assert.deepEqual(partial, [`<link rel="icon" href="/f.svg">`, `<link rel="manifest" href="/m.webmanifest?x=1&amp;y=2">`]);
+  assert.deepEqual(links({ ...all, headHtml: `<link rel="manifest" href="/mine.json"><link rel="icon" href="/mine.ico"><link rel="apple-touch-icon" href="/mine.png">` }), []);
+
+  // The built-in tab icon is drawn only when the app has no icon of any kind, in headHtml or in the options.
+  const builtIn = (branding) => links(branding).filter((l) => l.includes("data:image/svg+xml")).length;
+  assert.equal(builtIn({}), 1);
+  for (const branding of [{ appleTouchIcon: "/a.png" }, { manifest: "/m.json" }, { favicon: "/f.svg" }, { favicon: false }, { headHtml: `<link rel="manifest" href="/m.json">` }]) {
+    assert.equal(builtIn(branding), 0, JSON.stringify(branding));
+  }
+});
+
 test("the page is the accent colour, and the colour of its text follows from it", () => {
   const html = renderLoginPage(BASE);
   assert.match(html, /<meta name="color-scheme" content="light">/);

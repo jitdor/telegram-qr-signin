@@ -480,7 +480,7 @@ system font. Nothing else is needed as long as `/auth/*` reaches `auth.handle()`
 the poll to work anyway. A custom `renderLoginPage` is given `fontsPath` and can use
 `fontFaceCss(fontsPath)` from `telegram-qr-signin/fonts`. To use your own fonts instead, put an
 `@font-face` and `:root { --tqa-display: "Your Font", ...; }` in `headHtml` (`--tqa-font` and
-`--tqa-mono` work the same way). `scripts/build-fonts.sh` regenerates the bundled files. The built-in tab icon is only a fallback: any `<link>` in `headHtml` with `rel` of `icon`, `apple-touch-icon`, `mask-icon` or `manifest` replaces it, so your app's icons (and its install icon) always win. `branding.favicon` sets an icon by href, or `false` for none. Motion is switched off
+`--tqa-mono` work the same way). `scripts/build-fonts.sh` regenerates the bundled files. Motion is switched off
 for visitors who ask for less of it.
 
 **Link previews.** Paste the sign-in address into Telegram, Slack, Discord, X or iMessage and it unfurls
@@ -495,6 +495,14 @@ change them. Your app's own tags win, as its icons do: a `<meta property="og:…
 Previews are cached by whoever made them, so an old link may keep its old card for a while;
 Telegram's [@WebpageBot](https://t.me/WebpageBot) refreshes it. `scripts/build-preview.mjs` redraws the
 bundled card.
+
+**Site icons.** The favicon, the iOS home-screen icon and the Android install icon all come from your app: the library's
+own tab icon (the site's letter on a dark tile) is drawn only when the app supplies none. Put your links in `headHtml`
+(`rel` of `icon`, `apple-touch-icon`, `mask-icon` or `manifest`), or set `branding.favicon`, `branding.appleTouchIcon` and
+`branding.manifest` to their hrefs; the manifest is what gives Android its install icon, so a signed-out visitor who installs
+the site gets yours, not the library's. A link in `headHtml` wins over the option of the same kind, and the library never
+writes a second one. `favicon: false` writes no tab icon at all. Serve the files without sign-in, or the browser is sent to
+the sign-in page for them.
 
 > **Upgrading from 1.2:** the page was redesigned, so the options that styled the old card are
 > gone: `subtitle`, `background`, `gradientFrom`, `gradientTo`, `qrDark`, `qrLight` and the

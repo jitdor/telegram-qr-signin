@@ -110,9 +110,12 @@ export const DEFAULT_BRANDING = {
   logoHtml: "",
   footerHtml: "",
   headHtml: "",
-  // The tab icon. "" draws the built-in one (the site's letter on a dark tile), a string is the href of
-  // your own, and false emits none. Whatever the app puts in `headHtml` (see appSuppliesIcon) wins over all three.
+  // The site's icons, each the href of your own. The library draws a tab icon of its own (the site's letter on
+  // a dark tile) only when the app supplies no icon of any kind; `favicon: false` turns even that off. Links in
+  // `headHtml` win over all of these (see iconTags).
   favicon: "",
+  appleTouchIcon: "",
+  manifest: "",
 };
 
 const INK = "#17130f";
@@ -166,35 +169,45 @@ function textOn(color) {
   return (luminance + 0.05) / (inkLuminance + 0.05) >= 1.05 / (luminance + 0.05) ? INK : "#ffffff";
 }
 
-/** The `rel` values that mean the app already has an icon (or an install manifest, which carries its own). */
-const ICON_RELS = new Set(["icon", "shortcut", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon", "manifest"]);
-
-/**
- * Whether `headHtml` holds a <link> that supplies an icon or a web app manifest, however its `rel` is
- * written: quoted either way or bare, in any case, among other tokens ("shortcut icon", "alternate icon").
- */
-function appSuppliesIcon(headHtml) {
-  for (const match of String(headHtml ?? "").matchAll(/<link\b[^>]*?\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
-    const rel = match[1] ?? match[2] ?? match[3];
-    if (rel.toLowerCase().split(/\s+/).some((token) => ICON_RELS.has(token))) return true;
+/** Every `rel` token on the <link> tags in `html`, lower-cased, however they are written (quoted either way or bare, among other tokens). */
+function relsIn(html) {
+  const rels = new Set();
+  for (const match of String(html ?? "").matchAll(/<link\b[^>]*?\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
+    for (const token of (match[1] ?? match[2] ?? match[3]).toLowerCase().split(/\s+/)) if (token) rels.add(token);
   }
-  return false;
+  return rels;
 }
 
 /**
- * A tab icon, only when the app has none of its own. An icon or manifest link in `headHtml` always wins;
- * otherwise `branding.favicon` (an href, or false for none); otherwise the site's letter in the accent
- * colour on a dark tile. The built-in one is an inline data: URI, so the browser does not go looking for /favicon.ico.
+ * The site's icons: the tab icon, the iOS home-screen icon and the Android install manifest. The app's own
+ * come first and the library only fills in what the app leaves out:
+ *
+ * - A <link> in `headHtml` is the app's own. A tab icon (`icon`, `shortcut`, `mask-icon`), an iOS icon
+ *   (`apple-touch-icon`) or a manifest (`manifest`) there is left alone and is never doubled.
+ * - Otherwise `branding.favicon`, `branding.appleTouchIcon` and `branding.manifest` (each an href) are written
+ *   as links, for the kinds the app has not supplied. `favicon: false` writes no tab icon at all.
+ * - Only when the app supplies no icon of any kind, by either route, does the library draw its own tab icon:
+ *   the site's letter in the accent colour on a dark tile, an inline data: URI so no /favicon.ico request is made.
  */
-function faviconLink(branding, letter) {
-  if (appSuppliesIcon(branding.headHtml) || branding.favicon === false) return "";
-  if (typeof branding.favicon === "string" && branding.favicon) return `<link rel="icon" href="${escapeHtml(branding.favicon)}">`;
-  const accent = escapeHtml(branding.accent);
-  const glyph = letter
-    ? `<text x="32" y="47" text-anchor="middle" font-family="Arial Black,Impact,Arial,sans-serif" font-weight="900" font-size="42" fill="${accent}">${escapeHtml(letter)}</text>`
-    : `<g transform="translate(14 14) scale(1.5)"><path fill="${accent}" d="${PLANE_PATH}"/></g>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="${INK}"/>${glyph}</svg>`;
-  return `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(svg)}">`;
+function iconTags(branding, letter) {
+  const rels = relsIn(branding.headHtml);
+  const has = (...names) => names.some((name) => rels.has(name));
+  const href = (value) => (typeof value === "string" ? value.trim() : "");
+  const [favicon, appleTouchIcon, manifest] = [branding.favicon, branding.appleTouchIcon, branding.manifest].map(href);
+  const tags = [];
+  if (favicon && !has("icon", "shortcut", "mask-icon")) tags.push(`<link rel="icon" href="${escapeHtml(favicon)}">`);
+  if (appleTouchIcon && !has("apple-touch-icon", "apple-touch-icon-precomposed")) tags.push(`<link rel="apple-touch-icon" href="${escapeHtml(appleTouchIcon)}">`);
+  if (manifest && !has("manifest")) tags.push(`<link rel="manifest" href="${escapeHtml(manifest)}">`);
+  const appHasIcons = has("icon", "shortcut", "mask-icon", "apple-touch-icon", "apple-touch-icon-precomposed", "manifest");
+  if (!appHasIcons && !favicon && !appleTouchIcon && !manifest && branding.favicon !== false) {
+    const accent = escapeHtml(branding.accent);
+    const glyph = letter
+      ? `<text x="32" y="47" text-anchor="middle" font-family="Arial Black,Impact,Arial,sans-serif" font-weight="900" font-size="42" fill="${accent}">${escapeHtml(letter)}</text>`
+      : `<g transform="translate(14 14) scale(1.5)"><path fill="${accent}" d="${PLANE_PATH}"/></g>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="${INK}"/>${glyph}</svg>`;
+    tags.push(`<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(svg)}">`);
+  }
+  return tags.join("\n");
 }
 
 /**
@@ -577,7 +590,7 @@ export function pageHead({ branding, fontsPath, title, letter, css = "", head = 
 <meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(title)}</title>
 ${head}
-${faviconLink(branding, letter)}
+${iconTags(branding, letter)}
 ${fontPreloadLinks(fontsPath)}
 ${branding.headHtml}
 <style>${loginStyles(branding, fontsPath)}${css}</style>`;
@@ -643,7 +656,7 @@ export function renderLoginPage(params) {
 <meta name="theme-color" content="${escapeHtml(branding.accent)}">
 <title>${escapeHtml(branding.title)}</title>
 ${previewTags({ branding, name, host, origin: params.origin, previewPath: params.previewPath })}
-${faviconLink(branding, letter)}
+${iconTags(branding, letter)}
 ${fontPreloadLinks(params.fontsPath)}
 ${branding.headHtml}
 <style>${loginStyles(branding, params.fontsPath)}</style>

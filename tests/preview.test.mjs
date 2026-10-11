@@ -71,6 +71,35 @@ test("branding sets the description and replaces the card, and everything is esc
   assert.equal(meta(absolute, "og:image"), "https://cdn.example/c.png");
 });
 
+test("the app's own preview tags win, so the library's card never overrides the app's", () => {
+  const count = (html, key) => (html.match(new RegExp(`<meta[^>]*(?:property|name)=["']?${key}["' >]`, "gi")) ?? []).length;
+  const base = { ...PAGE, origin: "https://app.example", previewPath: "/auth/preview-x.png" };
+
+  // An image of its own replaces the card and the facts about the card; its other tags are untouched.
+  const withImage = renderLoginPage({ ...base, branding: { headHtml: `<meta property="og:image" content="https://app.example/mine.png">\n<meta name='twitter:card' content='summary_large_image'>` } });
+  assert.equal(count(withImage, "og:image"), 1);
+  assert.equal(count(withImage, "twitter:image"), 0);
+  assert.equal(count(withImage, "twitter:card"), 1);
+  for (const key of ["og:image:width", "og:image:height", "og:image:type", "og:image:alt"]) assert.equal(count(withImage, key), 0, key);
+  assert.ok(!withImage.includes("/auth/preview-x.png"));
+  assert.ok(meta(withImage, "og:title"), "tags the app did not write are still the library's");
+
+  // A twitter:image alone counts as an image of its own too.
+  const twitterOnly = renderLoginPage({ ...base, branding: { headHtml: `<meta name="twitter:image" content="https://app.example/t.png">` } });
+  assert.equal(count(twitterOnly, "twitter:image"), 1);
+  assert.equal(count(twitterOnly, "og:image"), 0);
+
+  // Any single tag the app writes replaces the library's, however it is written.
+  const titled = renderLoginPage({ ...base, branding: { headHtml: `<META PROPERTY=og:title content="Mine"><meta name="description" content="Mine too">` } });
+  assert.equal(count(titled, "og:title"), 1);
+  assert.equal(count(titled, "description"), 1);
+  assert.ok(meta(titled, "og:image"), "the card stays when the app wrote no image");
+
+  // Nothing from the app: unchanged.
+  assert.equal(count(renderLoginPage(base), "og:image"), 1);
+  assert.equal(meta(renderLoginPage(base), "twitter:card"), "summary_large_image");
+});
+
 test("without an address the preview is text only, and a hostile image is dropped", () => {
   const html = renderLoginPage({ ...PAGE, previewPath: "/auth/preview-x.png" });
   assert.equal(meta(html, "og:image"), undefined);

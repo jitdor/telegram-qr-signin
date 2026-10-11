@@ -518,7 +518,8 @@ export function nameScaleFor(name) {
 /**
  * The Open Graph and Twitter tags link previews are built from: a title, a short description and, when the
  * address the page is served from is known, the card. Link previews need an absolute image URL, so without
- * an `origin` (or `branding.previewImage` as an absolute URL) the preview is text only.
+ * an `origin` (or `branding.previewImage` as an absolute URL) the preview is text only. Any of these tags the
+ * app already has in `branding.headHtml` is left to the app; an og:image or twitter:image there replaces the card.
  */
 export function previewTags({ branding, name, host, origin, previewPath }) {
   const title = String(branding.previewTitle || branding.title).replace("{name}", name || host || "this site");
@@ -532,7 +533,12 @@ export function previewTags({ branding, name, host, origin, previewPath }) {
     image = "";
   }
   if (image && !/^https?:/i.test(image)) image = "";
-  const meta = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
+  // The app's own tags win, as its icons do: a tag it puts in `headHtml` is left alone, and an image of its own
+  // (og:image or twitter:image) replaces the library's card and the facts about that card (size, type, alt).
+  const set = metaKeysIn(branding.headHtml);
+  const appImage = set.has("og:image") || set.has("twitter:image");
+  if (appImage) image = "";
+  const meta = (attr, key, value) => (set.has(key) ? "" : `<meta ${attr}="${key}" content="${escapeHtml(value)}">`);
   return [
     description && meta("name", "description", description),
     meta("property", "og:type", "website"),
@@ -544,13 +550,22 @@ export function previewTags({ branding, name, host, origin, previewPath }) {
     image && !own && meta("property", "og:image:width", PREVIEW_WIDTH),
     image && !own && meta("property", "og:image:height", PREVIEW_HEIGHT),
     image && meta("property", "og:image:alt", "Sign in with a QR code: scan it with Telegram"),
-    meta("name", "twitter:card", image ? "summary_large_image" : "summary"),
+    !appImage && meta("name", "twitter:card", image ? "summary_large_image" : "summary"),
     meta("name", "twitter:title", title),
     description && meta("name", "twitter:description", description),
     image && meta("name", "twitter:image", image),
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** The `property` / `name` of every <meta> in `html`, lower-cased: which tags the app has already written. */
+function metaKeysIn(html) {
+  const keys = new Set();
+  for (const tag of String(html ?? "").matchAll(/<meta\b[^>]*>/gi)) {
+    for (const m of tag[0].matchAll(/\b(?:property|name)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) keys.add((m[1] ?? m[2] ?? m[3]).trim().toLowerCase());
+  }
+  return keys;
 }
 
 /** Everything inside <head> that every pass page shares. `css` is added after the shared stylesheet. */

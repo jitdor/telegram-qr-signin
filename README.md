@@ -490,7 +490,9 @@ into a card: the page's title, a short description and a 1200×630 image in the 
 `/auth/*` reaches `auth.handle()`. The image URL must be absolute, so it is built from the address the page
 is served from; a page rendered without a request has the text but no image. The title is "Telegram QR Sign-in Provider" (the browser tab keeps `title`). Set `branding.previewTitle`,
 `branding.description` (`{name}` is the site's name) or `branding.previewImage` (your own absolute URL or a path on the site) to
-change them. Previews are cached by whoever made them, so an old link may keep its old card for a while;
+change them. Your app's own tags win, as its icons do: a `<meta property="og:…">` or `<meta name="twitter:…">` in
+`headHtml` replaces the library's tag of the same name, and an `og:image` or `twitter:image` there replaces the built-in card.
+Previews are cached by whoever made them, so an old link may keep its old card for a while;
 Telegram's [@WebpageBot](https://t.me/WebpageBot) refreshes it. `scripts/build-preview.mjs` redraws the
 bundled card.
 
